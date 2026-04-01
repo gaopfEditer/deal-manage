@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import os
+import signal
 import subprocess
 import traceback
 import shlex
@@ -153,14 +154,21 @@ class ScriptScheduler:
             return {"script_id": script_id, "stopped": False, "message": "not running"}
 
         await runtime.log_queue.put(f"[{self._now()}] Stopping process pid={proc.pid} ...")
-        proc.terminate()
+        if os.name == "nt":
+            proc.terminate()
+        else:
+            # macOS/Linux: terminate process group to avoid orphan children.
+            os.killpg(proc.pid, signal.SIGTERM)
         try:
             await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=5)
         except asyncio.TimeoutError:
             await runtime.log_queue.put(
                 f"[{self._now()}] Terminate timeout, force kill pid={proc.pid}"
             )
-            proc.kill()
+            if os.name == "nt":
+                proc.kill()
+            else:
+                os.killpg(proc.pid, signal.SIGKILL)
             await asyncio.to_thread(proc.wait)
 
         runtime.status = "online"
@@ -191,6 +199,8 @@ class ScriptScheduler:
                 errors="replace",
                 bufsize=1,
                 env=env,
+                # macOS/Linux: create a new session so we can stop entire process group.
+                start_new_session=(os.name != "nt"),
             )
             runtime.process = proc
 
