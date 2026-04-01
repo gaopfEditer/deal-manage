@@ -243,40 +243,50 @@ class ScriptScheduler:
             line = await queue.get()
             yield line
 
-    def _build_command(
-        self, script_cfg: dict[str, Any], action: str, keyword: str | None
-    ) -> tuple[list[str], Path]:
-        script_path_raw = str(script_cfg.get("script_path", "."))
-        run_expr = script_cfg.get("run")
-        venv_path = script_cfg.get("venv_path")
-        python_executable = sys.executable
-        run_cwd = self.root_dir
+    def _resolve_project_dir(self, script_path_raw: str) -> Path:
+        base = Path(script_path_raw)
+        if not base.is_absolute():
+            base = self.root_dir / base
+        if base.is_dir():
+            return base
+        if base.is_file():
+            return base.parent
+        raise FileNotFoundError(
+            f"script_path is not a valid file or directory: {base}"
+        )
+
+    @staticmethod
+    def _path_is_under(child: Path, parent: Path) -> bool:
+        try:
+            child.resolve().relative_to(parent.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _resolve_python_executable(
+        self, project_dir: Path, venv_path: str | None, script_path_raw: str
+    ) -> str:
+        """解析子进程使用的 Python：始终以目标项目目录为准，禁止在误配时回退到 deal-manage 的 venv。"""
+        if not project_dir.is_dir():
+            raise FileNotFoundError(
+                f"script_path is not an existing directory: {project_dir}. "
+                "Fix script_path in config."
+            )
 
         if venv_path:
-            # venv_path 支持两种语义：
-            # 1) 绝对路径：直接使用
-            # 2) 相对路径：优先相对 script_path(项目目录)，再回退相对仓库根目录
-            venv_base = Path(script_path_raw)
-            if not venv_base.is_absolute():
-                venv_base = self.root_dir / venv_base
-            if not venv_base.exists():
-                venv_base = self.root_dir
-
             venv_root = Path(venv_path)
             if not venv_root.is_absolute():
-                venv_root = venv_base / venv_root
+                venv_root = project_dir / venv_root
 
             candidates: list[Path] = [venv_root]
-            # 兼容 venv / .venv 命名差异，优先按配置名，再尝试另一种
             if not Path(venv_path).is_absolute():
                 vname = Path(venv_path).name
                 if vname.startswith("."):
-                    candidates.append(venv_base / vname.lstrip("."))
+                    candidates.append(project_dir / vname.lstrip("."))
                 else:
-                    candidates.append(venv_base / f".{vname}")
+                    candidates.append(project_dir / f".{vname}")
 
             checked: list[str] = []
-            matched = None
             for root in candidates:
                 if os.name == "nt":
                     candidate = root / "Scripts" / "python.exe"
@@ -284,21 +294,50 @@ class ScriptScheduler:
                     candidate = root / "bin" / "python"
                 checked.append(str(candidate))
                 if candidate.exists():
-                    matched = candidate
-                    break
-            if matched:
-                python_executable = str(matched)
+                    return str(candidate)
+            raise FileNotFoundError(
+                "Configured venv python not found. "
+                f"Checked: {checked}. "
+                f"script_path='{script_path_raw}', venv_path='{venv_path}'."
+            )
+
+        # 未配置 venv：本仓库内脚本仍用当前解释器；对外部项目禁止用 deal-manage 的 Python。
+        root = self.root_dir
+        if self._path_is_under(project_dir, root):
+            return sys.executable
+
+        for name in (".venv", "venv"):
+            vr = project_dir / name
+            if os.name == "nt":
+                candidate = vr / "Scripts" / "python.exe"
             else:
-                raise FileNotFoundError(
-                    "Configured venv python not found. "
-                    f"Checked: {checked}. "
-                    f"script_path='{script_path_raw}', venv_path='{venv_path}'."
-                )
+                candidate = vr / "bin" / "python"
+            if candidate.exists():
+                return str(candidate)
+
+        exe = Path(sys.executable)
+        if self._path_is_under(exe, root):
+            raise FileNotFoundError(
+                "Refusing to use deal-manage's interpreter for an external project. "
+                f"project_dir={project_dir}. "
+                "Set venv_path in config or create .venv / venv under that project."
+            )
+        return sys.executable
+
+    def _build_command(
+        self, script_cfg: dict[str, Any], action: str, keyword: str | None
+    ) -> tuple[list[str], Path]:
+        script_path_raw = str(script_cfg.get("script_path", "."))
+        run_expr = script_cfg.get("run")
+        venv_path = script_cfg.get("venv_path")
+        project_dir = self._resolve_project_dir(script_path_raw)
+        python_executable = self._resolve_python_executable(
+            project_dir, venv_path, script_path_raw
+        )
+        run_cwd = self.root_dir
 
         if run_expr:
-            run_cwd = Path(script_path_raw)
-            if not run_cwd.is_absolute():
-                run_cwd = self.root_dir / run_cwd
+            run_cwd = project_dir
             tokens = shlex.split(str(run_expr), posix=False)
             if tokens and tokens[0].lower() in {"python", "python3", "py"}:
                 tokens[0] = python_executable

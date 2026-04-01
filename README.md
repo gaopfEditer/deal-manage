@@ -57,3 +57,16 @@ projects:
 ```
 
 系统会自动将项目下每个 `scripts` 条目展开成一个独立任务卡片（ID 形如 `auto-deal-eth-run-calendar`）。
+
+
+
+cd /Users/mac/frontend/code/1.operations/deal-manage
+python3 -m venv .venv
+source .venv/bin/activate
+
+安装依赖
+pip install fastapi uvicorn pyyaml
+
+启动后段
+uvicorn manager.main:app --reload
+
