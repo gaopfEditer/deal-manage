@@ -1,0 +1,4 @@
+{"time": "2026-04-01 15:50:23", "run_id": "20260401155023-auto-deal-eth-run-calendar", "event": "start", "action": "fetch", "keyword": null, "cmd": ["D:\\frontend\\main\\python\\auto-deal-eth\\venv\\Scripts\\python.exe", "-m", "getinfo.run_calendar", "--action", "fetch"], "cwd": "D:\\frontend\\main\\python\\auto-deal-eth"}
+{"time": "2026-04-01 15:50:23", "run_id": "20260401155023-auto-deal-eth-run-calendar", "event": "error", "message": ""}
+{"time": "2026-04-01 15:51:20", "run_id": "20260401155120-auto-deal-eth-run-calendar", "event": "start", "action": "interval", "keyword": null, "cmd": ["D:\\frontend\\main\\python\\auto-deal-eth\\venv\\Scripts\\python.exe", "-m", "getinfo.run_calendar", "--action", "interval"], "cwd": "D:\\frontend\\main\\python\\auto-deal-eth"}
+{"time": "2026-04-01 15:51:20", "run_id": "20260401155120-auto-deal-eth-run-calendar", "event": "error", "message": ""}

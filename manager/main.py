@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+from pathlib import Path
+import sys
+from typing import Any
+
+import yaml
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .scheduler import ScriptScheduler
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+WEB_DIR = Path(__file__).resolve().parent / "web"
+CONFIG_PATH = ROOT_DIR / "config.yaml"
+
+# Windows 下 SelectorEventLoop 不支持 asyncio subprocess，需切换 Proactor。
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+
+def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    # 兼容两种结构：
+    # 1) 旧版: scripts: [...]
+    # 2) 新版: projects: [{ id, script_path, venv_path, scripts: [...] }]
+    if "scripts" in cfg:
+        return cfg
+
+    normalized: list[dict[str, Any]] = []
+    for project in cfg.get("projects", []):
+        project_id = project.get("id", "project")
+        project_name = project.get("name", project_id)
+        project_path = project.get("script_path", ".")
+        project_venv = project.get("venv_path")
+        for item in project.get("scripts", []):
+            item_id = item.get("id")
+            if not item_id:
+                continue
+            normalized.append(
+                {
+                    "id": f"{project_id}-{item_id}",
+                    "name": item.get("name", f"{project_name} / {item_id}"),
+                    "icon": item.get("icon", "📄"),
+                    "script_path": item.get("script_path", project_path),
+                    "venv_path": item.get("venv_path", project_venv),
+                    "run": item.get("run"),
+                    "schedule": item.get("schedule", {}),
+                }
+            )
+    return {"scripts": normalized}
+
+
+def load_config() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {"scripts": []}
+    with CONFIG_PATH.open("r", encoding="utf-8") as file:
+        cfg = yaml.safe_load(file) or {}
+    return _normalize_config(cfg)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = ScriptScheduler(load_config(), ROOT_DIR)
+    await scheduler.start_periodic_jobs()
+    app.state.scheduler = scheduler
+    try:
+        yield
+    finally:
+        await scheduler.shutdown()
+
+
+app = FastAPI(title="Script Matrix Manager", lifespan=lifespan)
+app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
+
+
+class SearchPayload(BaseModel):
+    keyword: str
+
+
+class SyncPayload(BaseModel):
+    content: str
+
+
+class CallbackPayload(BaseModel):
+    result: Any
+
+
+class LogPayload(BaseModel):
+    message: str
+    level: str = "INFO"
+    source: str = "callback"
+
+
+@app.get("/")
+async def root():
+    index_file = WEB_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "Web build not found. Put Vue build into manager/web."}
+
+
+@app.get("/api/scripts")
+async def list_scripts():
+    return {"items": app.state.scheduler.list_cards()}
+
+
+@app.post("/api/scripts/{script_id}/fetch")
+async def run_fetch(script_id: str):
+    try:
+        await app.state.scheduler.trigger(script_id, action="fetch")
+        return {"ok": True}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/search")
+async def run_search(script_id: str, payload: SearchPayload):
+    try:
+        await app.state.scheduler.trigger(script_id, action="search", keyword=payload.keyword)
+        return {"ok": True}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/stop")
+async def stop_script(script_id: str):
+    try:
+        data = await app.state.scheduler.stop(script_id)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/sync-memos")
+async def sync_memos(script_id: str, payload: SyncPayload):
+    try:
+        await app.state.scheduler.trigger(script_id, action="sync", keyword=payload.content)
+        return {"ok": True}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/callback")
+async def callback_result(script_id: str, payload: CallbackPayload):
+    try:
+        data = app.state.scheduler.set_callback_result(script_id, payload.result)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/scripts/{script_id}/result")
+async def get_result(script_id: str):
+    try:
+        data = app.state.scheduler.get_callback_result(script_id)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/log")
+async def callback_log(script_id: str, payload: LogPayload):
+    try:
+        data = await app.state.scheduler.push_callback_log(
+            script_id=script_id,
+            message=payload.message,
+            level=payload.level,
+            source=payload.source,
+        )
+        return {"ok": True, **data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/scripts/{script_id}/log-history")
+async def callback_log_history(script_id: str, limit: int = 50):
+    try:
+        data = app.state.scheduler.get_callback_logs(script_id, limit=limit)
+        return {"ok": True, **data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/scripts/{script_id}/logs")
+async def script_logs(script_id: str):
+    scheduler = app.state.scheduler
+
+    async def event_stream():
+        try:
+            async for line in scheduler.stream_logs(script_id):
+                yield f"data: {line}\n\n"
+        except KeyError:
+            yield "event: error\ndata: script not found\n\n"
+
+    # SSE：浏览器 EventSource 与反向代理下需禁用缓存/缓冲，否则“实时”观感会变差
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
