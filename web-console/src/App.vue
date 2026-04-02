@@ -18,7 +18,12 @@
         <div class="meta">上次退出码: {{ item.last_exit_code ?? "-" }}</div>
         <div v-if="item.last_error" class="meta">错误: {{ item.last_error }}</div>
         <div class="meta">回调时间: {{ item.last_callback_time || "-" }}</div>
-        <div class="meta">回调结果: {{ formatResult(item.last_callback_result) }}</div>
+        <div class="meta" v-show="false">回调结果: {{ formatResult(item.last_callback_result) }}</div>
+        <div style="margin-top: 8px" v-if="item.last_callback_result?.analysis">
+          <el-button size="small" type="primary" @click="openMarkdownConfirm(item)">
+            确认并编辑（Markdown）
+          </el-button>
+        </div>
         <div class="actions">
           <el-button size="small" type="primary" @click="runFetch(item)">立即执行</el-button>
           <el-button
@@ -30,7 +35,6 @@
             停止
           </el-button>
           <el-button size="small" @click="openSearch(item)">搜索</el-button>
-          <el-button size="small" type="success" @click="syncMemos(item)">同步到 Memos</el-button>
           <el-button size="small" type="info" @click="openDrawer(item)">实时控制台</el-button>
         </div>
       </el-card>
@@ -46,13 +50,39 @@
 
     <el-drawer v-model="drawerVisible" title="实时控制台" size="55%" direction="btt">
       <div class="meta">当前任务: {{ activeScriptName || "-" }}</div>
+      <div style="display: flex; justify-content: flex-end; margin: 8px 0 6px">
+        <el-button size="small" type="warning" @click="clearConsole">
+          清空
+        </el-button>
+      </div>
       <div ref="consoleEl" class="console">{{ logText }}</div>
     </el-drawer>
+
+    <el-dialog
+      v-model="markdownDialogVisible"
+      title="确认并发布到 Memos"
+      width="720px"
+    >
+      <div style="margin-bottom: 10px; color: #606266; font-size: 13px">
+        先点击「确认暂存」把当前 Markdown 保存到本地；再点击「发布到 Memos」写入云端。
+      </div>
+      <el-input
+        v-model="markdownDraft"
+        type="textarea"
+        :autosize="{ minRows: 10, maxRows: 24 }"
+      />
+      <template #footer>
+        <el-button @click="markdownDialogVisible = false">关闭</el-button>
+        <el-button type="primary" @click="confirmDraft">确认暂存</el-button>
+        <el-button type="success" @click="publishDraft">发布到 Memos</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ElMessage } from "element-plus";
 
 const cards = ref([]);
 const searchDialogVisible = ref(false);
@@ -60,11 +90,21 @@ const searchKeyword = ref("");
 const targetScript = ref(null);
 const drawerVisible = ref(false);
 const activeScriptName = ref("");
+const activeScriptId = ref("");
 const logText = ref("");
+const consoleByScriptId = ref({});
 const eventSource = ref(null);
 const consoleEl = ref(null);
 
 let pollTimer = null;
+
+const markdownDialogVisible = ref(false);
+const markdownDraft = ref("");
+const markdownTargetId = ref("");
+
+function draftKey(scriptId) {
+  return `memo_draft:${scriptId}`;
+}
 
 function statusText(status) {
   const m = { online: "在线", running: "运行中", error: "异常" };
@@ -122,21 +162,62 @@ async function confirmSearch() {
   loadCards();
 }
 
-async function syncMemos(item) {
-  const content = `${item.name} @ ${new Date().toLocaleString()}`;
-  await fetch(`/api/scripts/${item.id}/sync-memos`, {
+function openMarkdownConfirm(item) {
+  markdownTargetId.value = item.id;
+  const analysis = item?.last_callback_result?.analysis;
+  const content =
+    analysis && typeof analysis === "string" ? analysis : formatResult(item.last_callback_result);
+
+  // 若之前已确认暂存，则优先加载已暂存版本
+  const saved = localStorage.getItem(draftKey(item.id));
+  markdownDraft.value = saved ? saved : content || "";
+  markdownDialogVisible.value = true;
+}
+
+function confirmDraft() {
+  if (!markdownTargetId.value) return;
+  localStorage.setItem(draftKey(markdownTargetId.value), markdownDraft.value || "");
+  ElMessage.success("已确认暂存到本地");
+}
+
+async function publishDraft() {
+  const scriptId = markdownTargetId.value;
+  if (!scriptId) return;
+  const saved = localStorage.getItem(draftKey(scriptId));
+  if (!saved) {
+    ElMessage.warning("请先点击「确认暂存」后再发布");
+    return;
+  }
+
+  const res = await fetch(`/api/scripts/${scriptId}/sync-memos`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content: saved, visibility: "PRIVATE" }),
   });
-  openDrawer(item);
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    // ignore
+  }
+  if (!res.ok) {
+    const msg = data?.detail || data?.message || res.statusText || "request failed";
+    ElMessage.error(`发布到 Memos 失败：${msg}`);
+    return;
+  }
+  const memoName =
+    data?.memo?.name || data?.memo?.uid || data?.memo?.id || data?.memo?.title;
+  ElMessage.success(`发布到 Memos 成功${memoName ? `：${memoName}` : ""}`);
+  markdownDialogVisible.value = false;
   loadCards();
 }
 
 function openDrawer(item) {
   drawerVisible.value = true;
   activeScriptName.value = item.name;
-  logText.value = "";
+  activeScriptId.value = item.id;
+  if (!consoleByScriptId.value[item.id]) consoleByScriptId.value[item.id] = "";
+  logText.value = consoleByScriptId.value[item.id];
   bindLogStream(item.id);
 }
 
@@ -149,11 +230,25 @@ function bindLogStream(scriptId) {
   eventSource.value = es;
   es.onmessage = (e) => {
     logText.value += `${e.data}\n`;
+    consoleByScriptId.value[scriptId] = logText.value;
     nextTick(() => {
       const el = consoleEl.value;
       if (el) el.scrollTop = el.scrollHeight;
     });
   };
+}
+
+async function clearConsole() {
+  const sid = activeScriptId.value;
+  if (!sid) return;
+  // 清空服务端 stdout 队列，避免清空后又立刻回灌旧日志
+  try {
+    await fetch(`/api/scripts/${sid}/clear-logs`, { method: "POST" });
+  } catch (e) {
+    // 忽略：前端也会清空显示内容
+  }
+  consoleByScriptId.value[sid] = "";
+  logText.value = "";
 }
 
 watch(drawerVisible, (v) => {

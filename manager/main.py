@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+import os
 import sys
 from typing import Any
 
@@ -13,10 +14,37 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .scheduler import ScriptScheduler
+from .upstream_proxy import router as upstream_router
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent / "web"
 CONFIG_PATH = ROOT_DIR / "config.yaml"
+
+# 加载本地 .env（避免运行时缺少 QWEN_API_KEY / GEMINI_API_KEY）
+def _load_local_env() -> None:
+    env_path = ROOT_DIR / ".env"
+    if not env_path.exists():
+        return
+    try:
+        text = env_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        key = k.strip()
+        val = v.strip().strip("\"'").strip()
+        if not key:
+            continue
+        # 注意：这里不要 setdefault，因为开发过程中 env 可能会修改，
+        # 需要让 reload 后能读到最新值。
+        os.environ[key] = val
+
+
+_load_local_env()
 
 # Windows 下 SelectorEventLoop 不支持 asyncio subprocess，需切换 Proactor。
 if sys.platform.startswith("win"):
@@ -43,11 +71,22 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
             normalized.append(
                 {
                     "id": f"{project_id}-{item_id}",
+                    "project_id": project_id,
+                    "script_key": item_id,
                     "name": item.get("name", f"{project_name} / {item_id}"),
                     "icon": item.get("icon", "📄"),
                     "script_path": item.get("script_path", project_path),
                     "venv_path": item.get("venv_path", project_venv),
                     "run": item.get("run"),
+                    "use_agent": item.get("use_agent", False),
+                    "agent_type": item.get("agent_type"),
+                    # 某些脚本依赖 Chrome DevTools Protocol（调试端口 9222）
+                    # 需要在启动脚本前先连通端口再执行子进程。
+                    "cdp": item.get("cdp", False),
+                    # 某些脚本的 argparse 不接受 --action/--keyword 参数；
+                    # 默认保持兼容：仍会传 --action {action}。
+                    "pass_action": item.get("pass_action", True),
+                    "to_memos": item.get("to_memos", False),
                     "schedule": item.get("schedule", {}),
                 }
             )
@@ -74,6 +113,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Script Matrix Manager", lifespan=lifespan)
+app.include_router(upstream_router)
 app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 
@@ -84,6 +124,7 @@ class SearchPayload(BaseModel):
 
 class SyncPayload(BaseModel):
     content: str
+    visibility: str = "PRIVATE"
 
 
 class CallbackPayload(BaseModel):
@@ -136,13 +177,29 @@ async def stop_script(script_id: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/api/scripts/{script_id}/clear-logs")
+async def clear_logs(script_id: str):
+    try:
+        data = await app.state.scheduler.clear_logs(script_id)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/scripts/{script_id}/sync-memos")
 async def sync_memos(script_id: str, payload: SyncPayload):
     try:
-        await app.state.scheduler.trigger(script_id, action="sync", keyword=payload.content)
-        return {"ok": True}
+        memo = await app.state.scheduler.sync_memos(
+            script_id,
+            content=payload.content,
+            visibility=payload.visibility,
+        )
+        return {"ok": True, "memo": memo}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        # 把真实错误透出，前端才能知道“成功了但没写入”的原因
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/scripts/{script_id}/callback")

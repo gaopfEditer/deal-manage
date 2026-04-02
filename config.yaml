@@ -1,20 +1,26 @@
 projects:
   - id: auto-deal-eth
     name: Auto Deal ETH
-    script_path: '/Users/mac/frontend/code/1.operations/auto-deal-eth'
+    script_path: 'D:\frontend\main\python\auto-deal-eth'
     venv_path: "venv"
     scripts:
       - id: run-calendar
         name: Calendar Runner
         icon: "🛰"
         run: "python -m getinfo.run_calendar"
+        use_agent: true
+        agent_type: "qwen"
         schedule:
           mode: interval
           seconds: 6000000
-      - id: run-1
-        name: Runner 1
+      - id: binance_market_lists_selenium
+        name: Binance Market Lists Selenium
         icon: "🔎"
-        run: "python -m getinfo.run_binance_square"
+        run: "python binance_market_lists_selenium.py"
+        cdp: true
+        pass_action: false
+        use_agent: true
+        agent_type: "qwen"
         schedule:
-          mode: once
-          enabled: false
+          mode: interval
+          seconds: 6000000

@@ -14,8 +14,20 @@
 ## 后端依赖
 
 ```bash
-pip install fastapi uvicorn pyyaml
+pip install -r requirements.txt
 ```
+
+### AI 接口（本仓库内实现，非转发）
+
+直接调用 **Google Gemini**（Generative Language API）与 **通义千问**（DashScope OpenAI 兼容接口）。路径约定与常见网关类似：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/gemini/chat` | JSON：`role`、`message`；或 `multipart`：`role`、`message`、`files` |
+| POST | `/gemini/image` | JSON：`prompt`，可选 `aspectRatio`、`referenceImages`（base64） |
+| POST | `/qwen/chat` | JSON：`messages`、`model`、`stream` |
+
+环境变量请参考项目根目录 **`.env.example`**，复制为 `.env` 后按需填写（可用 `python-dotenv` 或系统环境变量注入）。
 
 ## 前端（Vue 3 + Element Plus）
 
@@ -57,16 +69,3 @@ projects:
 ```
 
 系统会自动将项目下每个 `scripts` 条目展开成一个独立任务卡片（ID 形如 `auto-deal-eth-run-calendar`）。
-
-
-
-cd /Users/mac/frontend/code/1.operations/deal-manage
-python3 -m venv .venv
-source .venv/bin/activate
-
-安装依赖
-pip install fastapi uvicorn pyyaml
-
-启动后段
-uvicorn manager.main:app --reload
-
