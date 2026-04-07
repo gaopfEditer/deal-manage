@@ -8,13 +8,46 @@ projects:
         name: Calendar Runner
         icon: "🛰"
         run: "python -m getinfo.run_calendar"
+        use_agent: true
+        agent_type: "qwen"
         schedule:
           mode: interval
           seconds: 6000000
-      - id: run-1
-        name: Runner 1
+      - id: binance_market_lists_selenium
+        name: Binance Market Lists Selenium
         icon: "🔎"
-        run: "python -m getinfo.run_binance_square"
+        run: "python binance_market_lists_selenium.py"
+        cdp: true
+        pass_action: false
+        use_agent: true
+        agent_type: "qwen"
         schedule:
-          mode: once
-          enabled: false
+          mode: interval
+          seconds: 6000000
+
+  - id: python-ai-operate
+    name: Auto Deal ETH
+    script_path: '/Users/mac/frontend/code/1.operations/python-ai-operate'
+    venv_path: "venv"
+    scripts:
+      - id: crawler
+        name: Crawler
+        icon: "🛰"
+        run: "python crawler.py"
+        schedule:
+          mode: interval
+          seconds: 6000000
+      - id: create
+        name: Create
+        icon: "🛰"
+        run: "python create.py"
+        schedule:
+          mode: interval
+          seconds: 6000000
+      - id: publish
+        name: Publish
+        icon: "🛰"
+        run: "python publish.py"
+        schedule:
+          mode: interval
+          seconds: 6000000

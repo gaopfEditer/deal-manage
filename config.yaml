@@ -1,7 +1,7 @@
 projects:
   - id: auto-deal-eth
     name: Auto Deal ETH
-    script_path: '/Users/mac/frontend/code/1.operations/auto-deal-eth'
+    script_path: 'D:\frontend\main\python\auto-deal-eth'
     venv_path: "venv"
     scripts:
       - id: run-calendar
@@ -21,33 +21,6 @@ projects:
         pass_action: false
         use_agent: true
         agent_type: "qwen"
-        schedule:
-          mode: interval
-          seconds: 6000000
-
-  - id: python-ai-operate
-    name: Auto Deal ETH
-    script_path: '/Users/mac/frontend/code/1.operations/python-ai-operate'
-    venv_path: "venv"
-    scripts:
-      - id: crawler
-        name: Crawler
-        icon: "🛰"
-        run: "python crawler.py"
-        schedule:
-          mode: interval
-          seconds: 6000000
-      - id: create
-        name: Create
-        icon: "🛰"
-        run: "python create.py"
-        schedule:
-          mode: interval
-          seconds: 6000000
-      - id: publish
-        name: Publish
-        icon: "🛰"
-        run: "python publish.py"
         schedule:
           mode: interval
           seconds: 6000000
