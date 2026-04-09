@@ -2,43 +2,78 @@
   <div class="page">
     <div class="header">
       <div class="title">任务矩阵</div>
-      <el-button type="primary" @click="loadCards">刷新状态</el-button>
+      <el-button type="primary" @click="refreshAll">刷新状态</el-button>
     </div>
 
-    <div class="grid">
-      <el-card v-for="item in cards" :key="item.id" shadow="hover">
-        <div class="card-title">
-          <div class="name">
-            <span>{{ item.icon }}</span>
-            <span>{{ item.name }}</span>
-          </div>
-          <el-tag :type="statusType(item.status)">{{ statusText(item.status) }}</el-tag>
+    <el-tabs v-model="mainTab" class="main-tabs">
+      <el-tab-pane label="脚本" name="scripts">
+        <div class="grid">
+          <el-card v-for="item in cards" :key="item.id" shadow="hover">
+            <div class="card-title">
+              <div class="name">
+                <span>{{ item.icon }}</span>
+                <span>{{ item.name }}</span>
+              </div>
+              <el-tag :type="statusType(item.status)">{{ statusText(item.status) }}</el-tag>
+            </div>
+            <div class="meta">上次运行: {{ item.last_run_time || "-" }}</div>
+            <div class="meta">上次退出码: {{ item.last_exit_code ?? "-" }}</div>
+            <div v-if="item.last_error" class="meta">错误: {{ item.last_error }}</div>
+            <div class="meta">回调时间: {{ item.last_callback_time || "-" }}</div>
+            <div class="meta" v-show="false">回调结果: {{ formatResult(item.last_callback_result) }}</div>
+            <div style="margin-top: 8px" v-if="item.last_callback_result?.analysis">
+              <el-button size="small" type="primary" @click="openMarkdownConfirm(item)">
+                确认并编辑（Markdown）
+              </el-button>
+            </div>
+            <div class="actions">
+              <el-button size="small" type="primary" @click="runFetch(item)">立即执行</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                :disabled="item.status !== 'running'"
+                @click="stopTask(item)"
+              >
+                停止
+              </el-button>
+              <el-button size="small" @click="openSearch(item)">搜索</el-button>
+              <el-button size="small" type="info" @click="openDrawer(item)">实时控制台</el-button>
+            </div>
+          </el-card>
         </div>
-        <div class="meta">上次运行: {{ item.last_run_time || "-" }}</div>
-        <div class="meta">上次退出码: {{ item.last_exit_code ?? "-" }}</div>
-        <div v-if="item.last_error" class="meta">错误: {{ item.last_error }}</div>
-        <div class="meta">回调时间: {{ item.last_callback_time || "-" }}</div>
-        <div class="meta" v-show="false">回调结果: {{ formatResult(item.last_callback_result) }}</div>
-        <div style="margin-top: 8px" v-if="item.last_callback_result?.analysis">
-          <el-button size="small" type="primary" @click="openMarkdownConfirm(item)">
-            确认并编辑（Markdown）
-          </el-button>
+      </el-tab-pane>
+
+      <el-tab-pane label="CDP" name="cdp">
+        <div class="cdp-toolbar">
+          <el-button type="primary" @click="loadCdpProfiles">刷新 CDP 配置</el-button>
         </div>
-        <div class="actions">
-          <el-button size="small" type="primary" @click="runFetch(item)">立即执行</el-button>
-          <el-button
-            size="small"
-            type="danger"
-            :disabled="item.status !== 'running'"
-            @click="stopTask(item)"
-          >
-            停止
-          </el-button>
-          <el-button size="small" @click="openSearch(item)">搜索</el-button>
-          <el-button size="small" type="info" @click="openDrawer(item)">实时控制台</el-button>
+        <div v-if="cdpProfiles.length" class="grid">
+          <el-card v-for="p in cdpProfiles" :key="p.id" shadow="hover">
+            <div class="card-title">
+              <div class="name">
+                <span>🌐</span>
+                <span>{{ p.name || p.id }}</span>
+              </div>
+              <el-tag type="info">{{ p.id }}</el-tag>
+            </div>
+            <div class="meta">调试端口: {{ p.remote_debugging_port ?? "-" }}</div>
+            <div class="meta cdp-path">user-data-dir: {{ p.user_data_dir || "-" }}</div>
+            <div class="meta cdp-path">chrome: {{ p.chrome_path || "-" }}</div>
+            <div class="actions">
+              <el-button
+                size="small"
+                type="warning"
+                :loading="cdpLoadingId === p.id"
+                @click="cdpKillAndStart(p)"
+              >
+                结束端口进程并启动 Chrome
+              </el-button>
+            </div>
+          </el-card>
         </div>
-      </el-card>
-    </div>
+        <el-empty v-else description="未配置 cdp_profiles，请在 config.yaml 顶层添加 cdp_profiles" />
+      </el-tab-pane>
+    </el-tabs>
 
     <el-dialog v-model="searchDialogVisible" title="输入搜索关键字" width="420px">
       <el-input v-model="searchKeyword" placeholder="请输入 keyword" clearable />
@@ -82,9 +117,12 @@
 
 <script setup>
 import { ref, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 
+const mainTab = ref("scripts");
 const cards = ref([]);
+const cdpProfiles = ref([]);
+const cdpLoadingId = ref("");
 const searchDialogVisible = ref(false);
 const searchKeyword = ref("");
 const targetScript = ref(null);
@@ -130,6 +168,50 @@ async function loadCards() {
   const res = await fetch("/api/scripts");
   const data = await res.json();
   cards.value = data.items || [];
+}
+
+async function loadCdpProfiles() {
+  const res = await fetch("/api/cdp/profiles");
+  const data = await res.json();
+  cdpProfiles.value = data.items || [];
+}
+
+function refreshAll() {
+  loadCards();
+  loadCdpProfiles();
+}
+
+async function cdpKillAndStart(p) {
+  if (!p?.id) return;
+  cdpLoadingId.value = p.id;
+  try {
+    const res = await fetch("/api/cdp/restart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: p.id }),
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      const msg = data?.detail || data?.message || res.statusText || "request failed";
+      ElMessage.error(`CDP 操作失败：${msg}`);
+      return;
+    }
+    const logs = (data?.logs || []).join("\n");
+    const cmd = Array.isArray(data?.command) ? data.command.join(" ") : "";
+    await ElMessageBox.alert(
+      `${logs || "完成"}\n\n命令：${cmd || "-"}`,
+      `已执行：${p.name || p.id}`,
+      { confirmButtonText: "确定" }
+    );
+    ElMessage.success("CDP：已结束端口进程并尝试启动 Chrome");
+  } finally {
+    cdpLoadingId.value = "";
+  }
 }
 
 async function runFetch(item) {
@@ -259,7 +341,7 @@ watch(drawerVisible, (v) => {
 });
 
 onMounted(() => {
-  loadCards();
+  refreshAll();
   pollTimer = setInterval(() => loadCards(), 300000);
 });
 
@@ -280,7 +362,19 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+.main-tabs {
+  margin-top: 4px;
+}
+.main-tabs :deep(.el-tabs__header) {
+  margin-bottom: 14px;
+}
+.cdp-toolbar {
+  margin-bottom: 12px;
+}
+.cdp-path {
+  word-break: break-all;
 }
 .grid {
   display: grid;

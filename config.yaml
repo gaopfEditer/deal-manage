@@ -1,7 +1,7 @@
 projects:
   - id: auto-deal-eth
     name: Auto Deal ETH
-    script_path: '/Users/mac/frontend/code/1.operations/auto-deal-eth'
+    script_path: 'D:\frontend\main\python\auto-deal-eth'
     venv_path: "venv"
     scripts:
       - id: run-calendar
@@ -27,7 +27,7 @@ projects:
 
   - id: python-ai-operate
     name: Auto Deal ETH
-    script_path: '/Users/mac/frontend/code/1.operations/python-ai-operate'
+    script_path: 'D:\frontend\main\python\TrendRadar'
     venv_path: "venv"
     scripts:
       - id: crawler
@@ -51,3 +51,20 @@ projects:
         schedule:
           mode: interval
           seconds: 6000000
+
+# CDP：在 Web「CDP」页按配置结束占用端口的进程并启动 Chrome
+cdp_profiles: 
+  - id: chrome-debug-default
+    name: Chrome 调试（示例）
+    # Windows 路径请用单引号，避免双引号里 \ 被当成转义（如 \G 会报错）
+    chrome_path: 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+    user_data_dir: 'D:\chrome_debug_profile'
+    remote_debugging_port: 9222
+    # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
+    after_port_kill_killall_chrome: false
+    twitter_profile_dir: 'D:\twitter_profile'
+    keys:
+      - twitter_api_key
+      - twitter_api_secret_key
+      - twitter_access_token
+      - twitter_access_token_secret

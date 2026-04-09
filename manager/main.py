@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from .scheduler import ScriptScheduler
 from .upstream_proxy import router as upstream_router
+from .cdp_control import kill_and_start_chrome
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -56,7 +57,9 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
     # 1) 旧版: scripts: [...]
     # 2) 新版: projects: [{ id, script_path, venv_path, scripts: [...] }]
     if "scripts" in cfg:
-        return cfg
+        merged = dict(cfg)
+        merged.setdefault("cdp_profiles", merged.get("cdp_profiles") or [])
+        return merged
 
     normalized: list[dict[str, Any]] = []
     for project in cfg.get("projects", []):
@@ -83,6 +86,9 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
                     # 某些脚本依赖 Chrome DevTools Protocol（调试端口 9222）
                     # 需要在启动脚本前先连通端口再执行子进程。
                     "cdp": item.get("cdp", False),
+                    # 可选：按脚本覆盖 CDP 地址（多 Chrome 实例时一人一端口）
+                    "cdp_host": item.get("cdp_host"),
+                    "cdp_port": item.get("cdp_port"),
                     # 某些脚本的 argparse 不接受 --action/--keyword 参数；
                     # 默认保持兼容：仍会传 --action {action}。
                     "pass_action": item.get("pass_action", True),
@@ -90,7 +96,10 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
                     "schedule": item.get("schedule", {}),
                 }
             )
-    return {"scripts": normalized}
+    return {
+        "scripts": normalized,
+        "cdp_profiles": list(cfg.get("cdp_profiles") or []),
+    }
 
 
 def load_config() -> dict[str, Any]:
@@ -137,6 +146,10 @@ class LogPayload(BaseModel):
     source: str = "callback"
 
 
+class CdpRestartPayload(BaseModel):
+    profile_id: str
+
+
 @app.get("/")
 async def root():
     index_file = WEB_DIR / "index.html"
@@ -148,6 +161,32 @@ async def root():
 @app.get("/api/scripts")
 async def list_scripts():
     return {"items": app.state.scheduler.list_cards()}
+
+
+@app.get("/api/cdp/profiles")
+async def list_cdp_profiles():
+    return {"items": app.state.scheduler.config.get("cdp_profiles", [])}
+
+
+@app.post("/api/cdp/restart")
+async def cdp_restart(payload: CdpRestartPayload):
+    profiles: list[dict[str, Any]] = app.state.scheduler.config.get("cdp_profiles", [])
+    prof = next((p for p in profiles if str(p.get("id")) == payload.profile_id), None)
+    if not prof:
+        raise HTTPException(status_code=404, detail=f"CDP profile '{payload.profile_id}' not found")
+
+    def _run() -> dict[str, Any]:
+        return kill_and_start_chrome(prof)
+
+    try:
+        result = await asyncio.to_thread(_run)
+        return {"ok": True, **result}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/scripts/{script_id}/fetch")

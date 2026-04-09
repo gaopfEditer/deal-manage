@@ -51,3 +51,13 @@ projects:
         schedule:
           mode: interval
           seconds: 6000000
+
+# 与「CDP」页对应：先结束占用 remote_debugging_port 的进程，再启动 Chrome（一目录一账号环境）
+cdp_profiles:
+  - id: chrome-debug
+    name: Chrome 调试（示例）
+    chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    user_data_dir: "/Users/mac/frontend/chrome-debug"
+    remote_debugging_port: 9222
+    # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
+    after_port_kill_killall_chrome: false

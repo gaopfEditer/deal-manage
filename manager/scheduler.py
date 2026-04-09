@@ -203,9 +203,9 @@ class ScriptScheduler:
         runtime.last_error = None
         runtime.last_run_time = self._now()
 
-        # 如果脚本依赖 Chrome DevTools Protocol（CDP），需要先验证 9222 端口可连通
+        # 如果脚本依赖 Chrome DevTools Protocol（CDP），需要先验证调试端口可连通
         if bool(script_cfg.get("cdp", False)):
-            await self._wait_for_cdp(runtime)
+            await self._wait_for_cdp(runtime, script_cfg)
 
         cmd, run_cwd = self._build_command(script_cfg, action, keyword)
         await runtime.log_queue.put(f"[{self._now()}] Execute: {' '.join(cmd)}")
@@ -278,9 +278,19 @@ class ScriptScheduler:
         finally:
             runtime.process = None
 
-    async def _wait_for_cdp(self, runtime: ScriptRuntime) -> None:
-        host = os.getenv("CDP_HOST", "127.0.0.1").strip() or "127.0.0.1"
-        port = int(os.getenv("CDP_PORT", "9222").strip() or "9222")
+    async def _wait_for_cdp(self, runtime: ScriptRuntime, script_cfg: dict[str, Any]) -> None:
+        # 脚本级 cdp_host / cdp_port 优先（与「一 user-data-dir + 一调试端口」多实例对应）
+        host_raw = script_cfg.get("cdp_host")
+        port_raw = script_cfg.get("cdp_port")
+        host = (
+            str(host_raw).strip()
+            if host_raw not in (None, "")
+            else (os.getenv("CDP_HOST", "127.0.0.1").strip() or "127.0.0.1")
+        )
+        if port_raw is not None and str(port_raw).strip() != "":
+            port = int(str(port_raw).strip())
+        else:
+            port = int(os.getenv("CDP_PORT", "9222").strip() or "9222")
         max_wait_seconds = float(os.getenv("CDP_WAIT_MAX_SECONDS", "30").strip() or "30")
         sleep_seconds = float(os.getenv("CDP_WAIT_INTERVAL_SECONDS", "0.5").strip() or "0.5")
 
