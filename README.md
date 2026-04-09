@@ -69,3 +69,23 @@ projects:
 ```
 
 系统会自动将项目下每个 `scripts` 条目展开成一个独立任务卡片（ID 形如 `auto-deal-eth-run-calendar`）。
+
+
+
+**以远程调试模式启动Chrome**：
+
+**Windows:**
+```powershell
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222  --user-data-dir="D:\chrome_debug_profile"
+```
+
+**Mac:**
+```bash
+
+lsof -ti:8000 | xargs kill -9
+
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="/Users/mac/frontend/chrome-debug"
+```
