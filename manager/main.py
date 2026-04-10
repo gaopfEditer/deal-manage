@@ -16,8 +16,15 @@ from pydantic import BaseModel
 from .scheduler import ScriptScheduler
 from .upstream_proxy import router as upstream_router
 from .cdp_control import kill_and_start_chrome
+from .data_views_service import (
+    DataViewsBrowseStore,
+    build_view_stat,
+    get_data_view_posts,
+    list_data_view_stats,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+DATA_VIEWS_BROWSE_PATH = ROOT_DIR / "manager" / "state" / "data_views_browse.json"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 CONFIG_PATH = ROOT_DIR / "config.yaml"
 
@@ -59,6 +66,7 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
     if "scripts" in cfg:
         merged = dict(cfg)
         merged.setdefault("cdp_profiles", merged.get("cdp_profiles") or [])
+        merged.setdefault("data_views", merged.get("data_views") or [])
         return merged
 
     normalized: list[dict[str, Any]] = []
@@ -99,12 +107,13 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return {
         "scripts": normalized,
         "cdp_profiles": list(cfg.get("cdp_profiles") or []),
+        "data_views": list(cfg.get("data_views") or []),
     }
 
 
 def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
-        return {"scripts": []}
+        return {"scripts": [], "cdp_profiles": [], "data_views": []}
     with CONFIG_PATH.open("r", encoding="utf-8") as file:
         cfg = yaml.safe_load(file) or {}
     return _normalize_config(cfg)
@@ -115,6 +124,7 @@ async def lifespan(app: FastAPI):
     scheduler = ScriptScheduler(load_config(), ROOT_DIR)
     await scheduler.start_periodic_jobs()
     app.state.scheduler = scheduler
+    app.state.data_views_browse = DataViewsBrowseStore(DATA_VIEWS_BROWSE_PATH)
     try:
         yield
     finally:
@@ -150,6 +160,13 @@ class CdpRestartPayload(BaseModel):
     profile_id: str
 
 
+class DataViewBrowsedPayload(BaseModel):
+    """mark_all_seen=True 时把已浏览同步为当前文件总条数；否则用 browsed_count 覆盖。"""
+
+    browsed_count: int | None = None
+    mark_all_seen: bool = False
+
+
 @app.get("/")
 async def root():
     index_file = WEB_DIR / "index.html"
@@ -166,6 +183,67 @@ async def list_scripts():
 @app.get("/api/cdp/profiles")
 async def list_cdp_profiles():
     return {"items": app.state.scheduler.config.get("cdp_profiles", [])}
+
+
+@app.get("/api/data-views")
+async def list_data_views():
+    views: list[dict[str, Any]] = list(app.state.scheduler.config.get("data_views") or [])
+    store: DataViewsBrowseStore = app.state.data_views_browse
+
+    def _run() -> list[dict[str, Any]]:
+        return list_data_view_stats(views, root_dir=ROOT_DIR, browse_store=store)
+
+    items = await asyncio.to_thread(_run)
+    return {"items": items}
+
+
+@app.get("/api/data-views/{view_id}/posts")
+async def data_view_posts(view_id: str, limit: int = 200, offset: int = 0):
+    views: list[dict[str, Any]] = list(app.state.scheduler.config.get("data_views") or [])
+    found = next((v for v in views if str(v.get("id")) == view_id), None)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"data view '{view_id}' not found")
+
+    def _run() -> dict[str, Any]:
+        return get_data_view_posts(
+            found,
+            root_dir=ROOT_DIR,
+            limit=limit,
+            offset=offset,
+        )
+
+    try:
+        return await asyncio.to_thread(_run)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/data-views/{view_id}/browsed")
+async def set_data_view_browsed(view_id: str, payload: DataViewBrowsedPayload):
+    views: list[dict[str, Any]] = list(app.state.scheduler.config.get("data_views") or [])
+    found = next((v for v in views if str(v.get("id")) == view_id), None)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"data view '{view_id}' not found")
+
+    store: DataViewsBrowseStore = app.state.data_views_browse
+
+    def _apply() -> dict[str, Any]:
+        if payload.mark_all_seen:
+            stat = build_view_stat(found, root_dir=ROOT_DIR, browse_store=store)
+            store.set_browsed(view_id, stat["record_count"])
+            return build_view_stat(found, root_dir=ROOT_DIR, browse_store=store)
+        if payload.browsed_count is not None:
+            store.set_browsed(view_id, payload.browsed_count)
+            return build_view_stat(found, root_dir=ROOT_DIR, browse_store=store)
+        raise ValueError("请传 browsed_count 或 mark_all_seen=true")
+
+    try:
+        item = await asyncio.to_thread(_apply)
+        return {"ok": True, "item": item}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/cdp/restart")

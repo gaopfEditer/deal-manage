@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.env
+.env.local
+.env.*.local
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / 前端构建（若本地调试产生）
+node_modules/
+web-console/node_modules/
+
+# 运行时状态（浏览计数等，勿提交）
+manager/state/
+
+# 本地/备用配置（按需取消注释）
+# confi-win.yaml
+# config-mac.yaml
+
+# 日志
+*.log
+manager/logs/
+
+# IDE / 编辑器
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

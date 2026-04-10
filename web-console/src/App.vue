@@ -73,7 +73,104 @@
         </div>
         <el-empty v-else description="未配置 cdp_profiles，请在 config.yaml 顶层添加 cdp_profiles" />
       </el-tab-pane>
+
+      <el-tab-pane label="数据" name="data">
+        <div class="cdp-toolbar">
+          <el-button type="primary" @click="loadDataViews">刷新数据视图</el-button>
+        </div>
+        <div v-if="dataViewItems.length" class="grid">
+          <el-card v-for="d in dataViewItems" :key="d.id" shadow="hover">
+            <div class="card-title">
+              <div class="name">
+                <span>📊</span>
+                <span>{{ d.name }}</span>
+              </div>
+              <el-tag type="success">{{ d.id }}</el-tag>
+            </div>
+            <div class="meta">
+              <strong>记录条数</strong> {{ d.record_count ?? "-" }} ｜
+              <strong>已浏览</strong> {{ d.browsed_count ?? "-" }} ｜
+              <strong>未读</strong> {{ d.unread_count ?? "-" }}
+            </div>
+            <div class="meta">文件更新时间: {{ d.file_mtime_iso || "-" }}</div>
+            <div class="meta cdp-path">配置路径: {{ d.path || "-" }}</div>
+            <div v-if="d.resolved_path" class="meta cdp-path">解析路径: {{ d.resolved_path }}</div>
+            <div v-if="d.error" class="meta data-view-error">读取异常: {{ d.error }}</div>
+            <div class="actions">
+              <el-button
+                size="small"
+                type="success"
+                :loading="dataViewBusyId === d.id"
+                :disabled="!d.file_exists || !!d.error"
+                @click="dataMarkAllSeen(d)"
+              >
+                全部标为已读
+              </el-button>
+              <el-button
+                size="small"
+                :loading="dataViewBusyId === d.id"
+                :disabled="!d.file_exists || !!d.error"
+                @click="dataSetBrowsed(d)"
+              >
+                设置已浏览条数
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="dataPostsLoading && dataPostsViewId === d.id"
+                :disabled="!d.file_exists || !!d.error"
+                @click="openDataPosts(d)"
+              >
+                查看帖子
+              </el-button>
+            </div>
+          </el-card>
+        </div>
+        <el-empty
+          v-else
+          description="未配置 data_views，请在 config.yaml 顶层添加 data_views（id / name / path）"
+        />
+      </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="dataPostsVisible"
+      :title="dataPostsDialogTitle"
+      width="min(960px, 96vw)"
+      destroy-on-close
+      class="data-posts-dialog"
+    >
+      <div v-loading="dataPostsLoading" class="data-posts-wrap">
+        <el-table :data="dataPostsRows" stripe border size="small" max-height="520">
+          <el-table-column prop="_author_slug" label="作者" width="110" show-overflow-tooltip />
+          <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="published_at" label="发布时间" width="200" show-overflow-tooltip />
+          <el-table-column label="链接" width="88">
+            <template #default="{ row }">
+              <el-link v-if="row.href" :href="row.href" target="_blank" type="primary">打开</el-link>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="raw" label="正文摘要" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ truncateText(row.raw, 120) }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="data-posts-pager">
+          <el-pagination
+            v-model:current-page="dataPostsPage"
+            v-model:page-size="dataPostsPageSize"
+            :page-sizes="[20, 50, 100, 200]"
+            layout="total, sizes, prev, pager, next"
+            :total="dataPostsTotal"
+            background
+            @size-change="onDataPostsSizeChange"
+            @current-change="loadDataPostsPage"
+          />
+        </div>
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="searchDialogVisible" title="输入搜索关键字" width="420px">
       <el-input v-model="searchKeyword" placeholder="请输入 keyword" clearable />
@@ -116,13 +213,34 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, watch, onMounted, onUnmounted, nextTick, computed } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 const mainTab = ref("scripts");
 const cards = ref([]);
 const cdpProfiles = ref([]);
 const cdpLoadingId = ref("");
+const dataViewItems = ref([]);
+const dataViewBusyId = ref("");
+const dataPostsVisible = ref(false);
+const dataPostsViewId = ref("");
+const dataPostsLoading = ref(false);
+const dataPostsRows = ref([]);
+const dataPostsTotal = ref(0);
+const dataPostsVersion = ref(null);
+const dataPostsPage = ref(1);
+const dataPostsPageSize = ref(50);
+const dataPostsCardName = ref("");
+
+const dataPostsDialogTitle = computed(() => {
+  const base = dataPostsCardName.value || "帖子列表";
+  const v =
+    dataPostsVersion.value !== null && dataPostsVersion.value !== undefined
+      ? `（version ${dataPostsVersion.value}）`
+      : "";
+  return `${base} ${v}`.trim();
+});
+
 const searchDialogVisible = ref(false);
 const searchKeyword = ref("");
 const targetScript = ref(null);
@@ -176,9 +294,130 @@ async function loadCdpProfiles() {
   cdpProfiles.value = data.items || [];
 }
 
+async function loadDataViews() {
+  const res = await fetch("/api/data-views");
+  const data = await res.json();
+  dataViewItems.value = data.items || [];
+}
+
 function refreshAll() {
   loadCards();
   loadCdpProfiles();
+  loadDataViews();
+}
+
+async function dataMarkAllSeen(item) {
+  if (!item?.id) return;
+  dataViewBusyId.value = item.id;
+  try {
+    const res = await fetch(`/api/data-views/${item.id}/browsed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mark_all_seen: true }),
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(data?.detail || "设置失败");
+      return;
+    }
+    ElMessage.success("已同步为全部已读");
+    await loadDataViews();
+  } finally {
+    dataViewBusyId.value = "";
+  }
+}
+
+async function dataSetBrowsed(item) {
+  if (!item?.id) return;
+  try {
+    const { value } = await ElMessageBox.prompt("请输入已浏览条数（非负整数）", "设置已浏览", {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      inputValue: String(item.browsed_count ?? 0),
+      inputPattern: /^\d+$/,
+      inputErrorMessage: "请输入非负整数",
+    });
+    const n = parseInt(value, 10);
+    dataViewBusyId.value = item.id;
+    const res = await fetch(`/api/data-views/${item.id}/browsed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ browsed_count: n }),
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(data?.detail || "设置失败");
+      return;
+    }
+    ElMessage.success("已更新已浏览条数");
+    await loadDataViews();
+  } catch (e) {
+    if (e !== "cancel") {
+      /* 用户取消不提示 */
+    }
+  } finally {
+    dataViewBusyId.value = "";
+  }
+}
+
+function truncateText(s, n) {
+  if (s == null || s === "") return "-";
+  const str = String(s);
+  return str.length <= n ? str : `${str.slice(0, n)}…`;
+}
+
+async function openDataPosts(d) {
+  if (!d?.id) return;
+  dataPostsViewId.value = d.id;
+  dataPostsCardName.value = d.name || d.id;
+  dataPostsPage.value = 1;
+  dataPostsVisible.value = true;
+  await loadDataPostsPage();
+}
+
+async function loadDataPostsPage() {
+  const id = dataPostsViewId.value;
+  if (!id) return;
+  dataPostsLoading.value = true;
+  try {
+    const offset = (dataPostsPage.value - 1) * dataPostsPageSize.value;
+    const res = await fetch(
+      `/api/data-views/${encodeURIComponent(id)}/posts?limit=${dataPostsPageSize.value}&offset=${offset}`
+    );
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(data?.detail || "加载失败");
+      dataPostsRows.value = [];
+      dataPostsTotal.value = 0;
+      dataPostsVersion.value = null;
+      return;
+    }
+    dataPostsRows.value = data.items || [];
+    dataPostsTotal.value = data.total ?? 0;
+    dataPostsVersion.value = data.version ?? null;
+  } finally {
+    dataPostsLoading.value = false;
+  }
+}
+
+async function onDataPostsSizeChange() {
+  dataPostsPage.value = 1;
+  await loadDataPostsPage();
 }
 
 async function cdpKillAndStart(p) {
@@ -375,6 +614,9 @@ onUnmounted(() => {
 }
 .cdp-path {
   word-break: break-all;
+}
+.data-view-error {
+  color: #f56c6c;
 }
 .grid {
   display: grid;

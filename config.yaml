@@ -68,3 +68,9 @@ cdp_profiles:
       - twitter_api_secret_key
       - twitter_access_token
       - twitter_access_token_secret
+
+# 数据视图：JSON 文件路径 → 卡片（记录条数 / 已浏览 / 未读），浏览计数存在 manager/state/data_views_browse.json
+data_views:
+  - id: binance-posts-state
+    name: 币安动态状态
+    path: 'D:\frontend\main\python\auto-deal-eth\binance_posts_state.json'
