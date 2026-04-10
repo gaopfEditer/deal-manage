@@ -258,10 +258,14 @@ def get_data_view_posts(
     offset = max(0, int(offset))
     page = items[offset : offset + limit]
     version = data.get("version") if isinstance(data, dict) else None
+    generated_at = data.get("generated_at") if isinstance(data, dict) else None
+    platform_labels = data.get("platform_labels") if isinstance(data, dict) else None
     return {
         "items": page,
         "total": total,
         "offset": offset,
         "limit": limit,
         "version": version,
+        "generated_at": generated_at,
+        "platform_labels": platform_labels,
     }

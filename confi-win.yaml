@@ -67,3 +67,6 @@ data_views:
   - id: binance-posts-state
     name: 币安动态状态
     path: "/Users/mac/frontend/code/1.operations/auto-deal-eth/binance_posts_state.json"
+  - id: trendradar-posts-state
+    name: TrendRadar / X 推文
+    path: 'D:\frontend\main\python\TrendRadar\output\trendradar_posts_state.json'

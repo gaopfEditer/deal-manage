@@ -141,19 +141,31 @@
       class="data-posts-dialog"
     >
       <div v-loading="dataPostsLoading" class="data-posts-wrap">
+        <div
+          v-if="dataPostsGeneratedAt || dataPostsPlatformLabelsText"
+          class="data-posts-meta"
+        >
+          <span v-if="dataPostsGeneratedAt">快照：{{ dataPostsGeneratedAt }}</span>
+          <span v-if="dataPostsPlatformLabelsText">
+            {{ dataPostsGeneratedAt ? " · " : "" }}{{ dataPostsPlatformLabelsText }}
+          </span>
+        </div>
         <el-table :data="dataPostsRows" stripe border size="small" max-height="520">
-          <el-table-column prop="_author_slug" label="作者" width="110" show-overflow-tooltip />
-          <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="published_at" label="发布时间" width="200" show-overflow-tooltip />
-          <el-table-column label="链接" width="88">
+          <el-table-column prop="_author_slug" label="分组" width="100" show-overflow-tooltip />
+          <el-table-column prop="author" label="账号" width="130" show-overflow-tooltip />
+          <el-table-column prop="category" label="分类" width="96" show-overflow-tooltip />
+          <el-table-column prop="rank" label="序" width="56" />
+          <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="published_at" label="发布时间" width="180" show-overflow-tooltip />
+          <el-table-column label="链接" width="72">
             <template #default="{ row }">
               <el-link v-if="row.href" :href="row.href" target="_blank" type="primary">打开</el-link>
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="raw" label="正文摘要" min-width="160" show-overflow-tooltip>
+          <el-table-column prop="raw" label="正文摘要" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">
-              {{ truncateText(row.raw, 120) }}
+              {{ truncateText(row.raw, 100) }}
             </template>
           </el-table-column>
         </el-table>
@@ -231,6 +243,16 @@ const dataPostsVersion = ref(null);
 const dataPostsPage = ref(1);
 const dataPostsPageSize = ref(50);
 const dataPostsCardName = ref("");
+const dataPostsGeneratedAt = ref("");
+const dataPostsPlatformLabels = ref(null);
+
+const dataPostsPlatformLabelsText = computed(() => {
+  const pl = dataPostsPlatformLabels.value;
+  if (!pl || typeof pl !== "object") return "";
+  return Object.entries(pl)
+    .map(([k, v]) => `${k} → ${v}`)
+    .join("  ·  ");
+});
 
 const dataPostsDialogTitle = computed(() => {
   const base = dataPostsCardName.value || "帖子列表";
@@ -405,11 +427,15 @@ async function loadDataPostsPage() {
       dataPostsRows.value = [];
       dataPostsTotal.value = 0;
       dataPostsVersion.value = null;
+      dataPostsGeneratedAt.value = "";
+      dataPostsPlatformLabels.value = null;
       return;
     }
     dataPostsRows.value = data.items || [];
     dataPostsTotal.value = data.total ?? 0;
     dataPostsVersion.value = data.version ?? null;
+    dataPostsGeneratedAt.value = data.generated_at || "";
+    dataPostsPlatformLabels.value = data.platform_labels ?? null;
   } finally {
     dataPostsLoading.value = false;
   }
@@ -617,6 +643,17 @@ onUnmounted(() => {
 }
 .data-view-error {
   color: #f56c6c;
+}
+.data-posts-meta {
+  margin-bottom: 10px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.data-posts-pager {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 .grid {
   display: grid;
