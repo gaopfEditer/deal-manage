@@ -94,7 +94,7 @@ lsof -ti:8000 | xargs kill -9
 
 另外两个124、176可以用的 
 
-// g17681831402@163.com see
+// g17681831402@163.com 没想好
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
 --remote-debugging-port=9223 \
 --user-data-dir="/Users/mac/frontend/chrome-debug-9223" \
@@ -113,7 +113,7 @@ lsof -ti:8000 | xargs kill -9
 --media-cache-size=10485760 \
 --password-store=basic
 
-// g17681831401@163.com 没想好
+// g17681831401@163.com see
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
 --remote-debugging-port=9224 \
 --user-data-dir="/Users/mac/frontend/chrome-debug-9224" \
