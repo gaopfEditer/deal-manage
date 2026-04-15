@@ -29,6 +29,8 @@ CONFIG_PATH = ROOT_DIR / "config.yaml"
 ENV_PATH = ROOT_DIR / ".env"
 BACKEND_READY_POLL_SECONDS = 3.0
 SCRIPT_STATUS_POLL_SECONDS = 3.0
+DEFAULT_BACKEND_HOST = "127.0.0.1"
+DEFAULT_BACKEND_PORT = 8000
 
 
 def _spawn(cmd: list[str], cwd: Path) -> subprocess.Popen:
@@ -150,6 +152,26 @@ def _wait_backend_ready(timeout_seconds: float = 60.0) -> bool:
     return False
 
 
+def _backend_api_alive(timeout: float = 1.5) -> bool:
+    try:
+        req = request.Request(url=f"{BACKEND_URL}/api/scripts", method="GET")
+        with request.urlopen(req, timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _choose_frontend_port(start_port: int = 5173) -> int:
+    port = int(start_port)
+    while _tcp_port_open("127.0.0.1", port):
+        port += 1
+    return port
+
+
+def _frontend_url(port: int) -> str:
+    return f"http://localhost:{int(port)}"
+
+
 def _wait_script_finished(script_id: str, stop_event: threading.Event, timeout_seconds: float = 1800.0) -> bool:
     deadline = time.time() + timeout_seconds
     while not stop_event.is_set() and time.time() < deadline:
@@ -233,6 +255,7 @@ def _start_cdp_runtime(stop_event: threading.Event) -> threading.Thread:
         runtime_cfg = _read_runtime_cfg_with_fallback()
         profile_id = str(runtime_cfg.get("profile_id") or "chrome-debug-default").strip()
         interval_seconds = int(runtime_cfg.get("interval_seconds", 10))
+        bootstrap_mode = str(runtime_cfg.get("bootstrap_mode") or "once").strip().lower()
         script_ids = [str(s).strip() for s in (runtime_cfg.get("bootstrap_scripts") or []) if str(s).strip()]
         if not script_ids:
             print("[CDP Runtime] No bootstrap_scripts configured, skip.")
@@ -261,10 +284,7 @@ def _start_cdp_runtime(stop_event: threading.Event) -> threading.Thread:
             print(f"[CDP Runtime] CDP restart failed: {exc}")
             return
 
-        print(
-            f"[CDP Runtime] bootstrap loop started, interval={interval_seconds}s, scripts={script_ids}"
-        )
-        while not stop_event.is_set():
+        def _trigger_once_round() -> None:
             for sid in script_ids:
                 if stop_event.is_set():
                     break
@@ -278,6 +298,18 @@ def _start_cdp_runtime(stop_event: threading.Event) -> threading.Thread:
                     print(f"[CDP Runtime] trigger failed {sid}: HTTP {exc.code}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[CDP Runtime] trigger failed {sid}: {exc}")
+
+        if bootstrap_mode != "loop":
+            print(f"[CDP Runtime] bootstrap mode=once, scripts={script_ids}")
+            _trigger_once_round()
+            print("[CDP Runtime] bootstrap once completed, follow script schedule afterwards.")
+            return
+
+        print(
+            f"[CDP Runtime] bootstrap mode=loop, interval={interval_seconds}s, scripts={script_ids}"
+        )
+        while not stop_event.is_set():
+            _trigger_once_round()
             stop_event.wait(max(1, interval_seconds))
 
     t = threading.Thread(target=worker, name="cdp-runtime", daemon=True)
@@ -293,10 +325,20 @@ def main() -> int:
         return 1
 
     backend_cmd = _backend_command()
-    frontend_cmd = _frontend_command()
+    frontend_port = _choose_frontend_port(5173)
+    frontend_cmd = _frontend_command() + ["--port", str(frontend_port)]
 
-    print(f"Starting backend: {' '.join(backend_cmd)}")
-    backend = _spawn(backend_cmd, ROOT_DIR)
+    backend: subprocess.Popen | None = None
+    if _backend_api_alive():
+        print(f"Backend already running: {BACKEND_URL} (reuse existing process)")
+    elif _tcp_port_open(DEFAULT_BACKEND_HOST, DEFAULT_BACKEND_PORT):
+        print(
+            f"Backend port {DEFAULT_BACKEND_HOST}:{DEFAULT_BACKEND_PORT} is occupied, "
+            "skip backend spawn to avoid crash."
+        )
+    else:
+        print(f"Starting backend: {' '.join(backend_cmd)}")
+        backend = _spawn(backend_cmd, ROOT_DIR)
     print(f"Starting frontend: {' '.join(frontend_cmd)}")
     frontend = _spawn(frontend_cmd, WEB_DIR)
     stop_event = threading.Event()
@@ -309,18 +351,20 @@ def main() -> int:
         if cdp_thread and cdp_thread.is_alive():
             cdp_thread.join(timeout=2)
         _stop_process(frontend)
-        _stop_process(backend)
+        if backend is not None:
+            _stop_process(backend)
 
     atexit.register(cleanup)
 
     try:
         # Wait briefly so dev server can boot, then open browser.
         time.sleep(2)
-        webbrowser.open(FRONTEND_URL)
-        print(f"Opened browser: {FRONTEND_URL}")
+        front_url = _frontend_url(frontend_port)
+        webbrowser.open(front_url)
+        print(f"Opened browser: {front_url}")
         print("Press Ctrl+C to stop both services.")
         while True:
-            if backend.poll() is not None:
+            if backend is not None and backend.poll() is not None:
                 print(f"Backend exited with code {backend.returncode}")
                 return backend.returncode or 0
             if frontend.poll() is not None:

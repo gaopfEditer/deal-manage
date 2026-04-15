@@ -69,6 +69,16 @@ cdp_profiles:
       - twitter_access_token
       - twitter_access_token_secret
 
+# run.py 在 IS_RUN_WITH_CDP=true 时读取该段：
+# 1) 先启动 cdp profile
+# 2) 按 interval_seconds 循环触发 bootstrap_scripts 的 fetch
+cdp_runtime:
+  profile_id: chrome-debug-default
+  interval_seconds: 10
+  bootstrap_scripts:
+    - auto-deal-eth-binance_market_lists_selenium
+    - python-ai-operate-crawler
+
 # 数据视图：JSON 文件路径 → 卡片（记录条数 / 已浏览 / 未读），浏览计数存在 manager/state/data_views_browse.json
 data_views:
   - id: binance-posts-state

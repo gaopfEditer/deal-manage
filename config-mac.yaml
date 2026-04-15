@@ -62,6 +62,16 @@ cdp_profiles:
     # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
     after_port_kill_killall_chrome: false
 
+# run.py 在 IS_RUN_WITH_CDP=true 时读取该段：
+# 1) 先启动 cdp profile
+# 2) 按 interval_seconds 循环触发 bootstrap_scripts 的 fetch
+cdp_runtime:
+  profile_id: chrome-debug
+  interval_seconds: 10
+  bootstrap_scripts:
+    - auto-deal-eth-binance_market_lists_selenium
+    - python-ai-operate-crawler
+
 # 与「数据」页对应：爬虫产出的 JSON 路径（id / name / path）
 data_views:
   - id: binance-posts-state

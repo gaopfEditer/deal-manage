@@ -218,6 +218,7 @@ class ScriptScheduler:
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(run_cwd),
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
