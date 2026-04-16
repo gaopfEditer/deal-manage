@@ -136,7 +136,7 @@
     <el-dialog
       v-model="dataPostsVisible"
       :title="dataPostsDialogTitle"
-      width="min(960px, 96vw)"
+      width="96vw"
       destroy-on-close
       class="data-posts-dialog"
     >
@@ -150,25 +150,30 @@
             {{ dataPostsGeneratedAt ? " · " : "" }}{{ dataPostsPlatformLabelsText }}
           </span>
         </div>
-        <el-table :data="dataPostsRows" stripe border size="small" max-height="520">
-          <el-table-column prop="_author_slug" label="分组" width="100" show-overflow-tooltip />
-          <el-table-column prop="author" label="账号" width="130" show-overflow-tooltip />
-          <el-table-column prop="category" label="分类" width="96" show-overflow-tooltip />
-          <el-table-column prop="rank" label="序" width="56" />
-          <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="published_at" label="发布时间" width="180" show-overflow-tooltip />
-          <el-table-column label="链接" width="72">
-            <template #default="{ row }">
+        <div v-if="dataPostsRows.length" class="data-posts-cards">
+          <el-card
+            v-for="(row, idx) in dataPostsRows"
+            :key="row.id || row.href || `${row.title || 'post'}-${idx}`"
+            class="data-post-card"
+            shadow="hover"
+          >
+            <div class="data-post-card-head">
+              <div class="data-post-title">
+                {{ row.title || "（无标题）" }}
+              </div>
               <el-link v-if="row.href" :href="row.href" target="_blank" type="primary">打开</el-link>
-              <span v-else>-</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="raw" label="正文摘要" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ truncateText(row.raw, 100) }}
-            </template>
-          </el-table-column>
-        </el-table>
+            </div>
+            <div class="data-post-summary">
+              {{ truncateText(row.raw, 220) || "（暂无摘要）" }}
+            </div>
+            <div class="data-post-foot">
+              <span v-if="row.author">{{ row.author }}</span>
+              <span v-if="row.category">{{ row.category }}</span>
+              <span v-if="row.published_at">{{ row.published_at }}</span>
+            </div>
+          </el-card>
+        </div>
+        <el-empty v-else description="当前页暂无帖子数据" />
         <div class="data-posts-pager">
           <el-pagination
             v-model:current-page="dataPostsPage"
@@ -654,6 +659,52 @@ onUnmounted(() => {
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+}
+.data-posts-cards {
+  max-height: 72vh;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding-right: 4px;
+}
+.data-post-card {
+  border-radius: 10px;
+}
+.data-post-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.data-post-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.45;
+}
+.data-post-summary {
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.data-post-foot {
+  color: #909399;
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 960px) {
+  .data-posts-cards {
+    grid-template-columns: 1fr;
+  }
 }
 .grid {
   display: grid;
