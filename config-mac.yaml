@@ -67,6 +67,8 @@ cdp_profiles:
 # 2) 按 interval_seconds 循环触发 bootstrap_scripts 的 fetch
 cdp_runtime:
   profile_id: chrome-debug
+  # 可选：once（默认，启动时仅触发一轮）/ loop（按 interval_seconds 持续触发）
+  bootstrap_mode: once
   interval_seconds: 10
   bootstrap_scripts:
     - auto-deal-eth-binance_market_lists_selenium
