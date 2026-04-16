@@ -12,6 +12,7 @@ import webbrowser
 import json
 import threading
 import socket
+import argparse
 from pathlib import Path
 from urllib import request, error
 
@@ -82,14 +83,21 @@ def _frontend_command() -> list[str]:
 def _backend_command() -> list[str]:
     # 优先当前解释器，保证与当前环境一致
     if importlib.util.find_spec("uvicorn") is not None:
-        return [sys.executable, "-m", "uvicorn", "manager.main:app", "--reload"]
+        return [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "manager.main:app",
+            "--reload",
+            "--no-access-log",
+        ]
     # 回退：PATH 里的 uvicorn
     if os.name == "nt":
         if shutil.which("uvicorn") or shutil.which("uvicorn.exe"):
-            return ["uvicorn", "manager.main:app", "--reload"]
+            return ["uvicorn", "manager.main:app", "--reload", "--no-access-log"]
     else:
         if shutil.which("uvicorn"):
-            return ["uvicorn", "manager.main:app", "--reload"]
+            return ["uvicorn", "manager.main:app", "--reload", "--no-access-log"]
     raise RuntimeError(
         "uvicorn not found. Please install it in current environment: pip install uvicorn"
     )
@@ -200,7 +208,7 @@ def _tcp_port_open(host: str, port: int, timeout: float = 1.5) -> bool:
         return False
 
 
-def _start_cdp_runtime(stop_event: threading.Event) -> threading.Thread:
+def _start_cdp_runtime(stop_event: threading.Event, no_bootstrap: bool = False) -> threading.Thread:
     def _read_runtime_cfg_with_fallback() -> dict[str, object]:
         # 优先 PyYAML；若环境无 yaml 包，则用简易文本解析（仅支持本项目 cdp_runtime 结构）
         try:
@@ -299,6 +307,10 @@ def _start_cdp_runtime(stop_event: threading.Event) -> threading.Thread:
                 except Exception as exc:  # noqa: BLE001
                     print(f"[CDP Runtime] trigger failed {sid}: {exc}")
 
+        if no_bootstrap:
+            print("[CDP Runtime] --no-bootstrap enabled, skip bootstrap_scripts.")
+            return
+
         if bootstrap_mode != "loop":
             print(f"[CDP Runtime] bootstrap mode=once, scripts={script_ids}")
             _trigger_once_round()
@@ -318,6 +330,14 @@ def _start_cdp_runtime(stop_event: threading.Event) -> threading.Thread:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument(
+        "--no-bootstrap",
+        action="store_true",
+        help="Skip auto triggering bootstrap_scripts in cdp_runtime.",
+    )
+    args = parser.parse_args()
+
     _load_dotenv(ENV_PATH)
 
     if not WEB_DIR.is_dir():
@@ -344,7 +364,7 @@ def main() -> int:
     stop_event = threading.Event()
     cdp_thread: threading.Thread | None = None
     if _is_true(os.getenv("IS_RUN_WITH_CDP")):
-        cdp_thread = _start_cdp_runtime(stop_event)
+        cdp_thread = _start_cdp_runtime(stop_event, no_bootstrap=args.no_bootstrap)
 
     def cleanup() -> None:
         stop_event.set()

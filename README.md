@@ -132,3 +132,7 @@ lsof -ti:8000 | xargs kill -9
 --media-cache-size=10485760 \
 --password-store=basic
 ```
+
+// 自动启动前后端，和默认启动一次抓取
+python run.py
+python run.py --no-bootstrap
