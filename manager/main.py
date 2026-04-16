@@ -26,7 +26,15 @@ from .data_views_service import (
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_VIEWS_BROWSE_PATH = ROOT_DIR / "manager" / "state" / "data_views_browse.json"
 WEB_DIR = Path(__file__).resolve().parent / "web"
-CONFIG_PATH = ROOT_DIR / "config.yaml"
+
+# 根据运行环境选择不同配置：优先显式 RUN_ENV，其次按平台推断。
+_RUN_ENV = os.getenv("RUN_ENV", "").strip().lower()
+if _RUN_ENV == "mac" or (_RUN_ENV == "" and sys.platform == "darwin"):
+    CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
+elif _RUN_ENV == "win" or (_RUN_ENV == "" and os.name == "nt"):
+    CONFIG_PATH = ROOT_DIR / "confi-win.yaml"
+else:
+    CONFIG_PATH = ROOT_DIR / "config.yaml"
 
 # 加载本地 .env（避免运行时缺少 QWEN_API_KEY / GEMINI_API_KEY）
 def _load_local_env() -> None:
