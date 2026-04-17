@@ -14,12 +14,18 @@ import threading
 import socket
 import argparse
 from pathlib import Path
+from typing import Any
 from urllib import request, error
 
 try:
     import yaml  # type: ignore
 except Exception:  # noqa: BLE001
     yaml = None
+
+try:
+    from manager.cdp_control import kill_and_start_chrome
+except Exception:  # noqa: BLE001
+    kill_and_start_chrome = None  # type: ignore[assignment,misc]
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -208,6 +214,90 @@ def _tcp_port_open(host: str, port: int, timeout: float = 1.5) -> bool:
         return False
 
 
+def _parse_cdp_profiles_fallback(text: str) -> list[dict[str, Any]]:
+    """无 PyYAML 时从 config.yaml 粗略解析 cdp_profiles 列表（与本项目缩进风格一致）。"""
+    profiles: list[dict[str, Any]] = []
+    lines = text.splitlines()
+    start: int | None = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith("cdp_profiles:"):
+            start = i + 1
+            break
+    if start is None:
+        return []
+    current: dict[str, Any] | None = None
+    in_keys = False
+    i = start
+    while i < len(lines):
+        raw = lines[i]
+        if not raw.strip() or raw.strip().startswith("#"):
+            i += 1
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if indent == 0 and not raw.strip().startswith("cdp_profiles"):
+            break
+        stripped = raw.strip()
+        if in_keys:
+            if indent <= 4 and not stripped.startswith("- "):
+                in_keys = False
+            else:
+                i += 1
+                continue
+        if stripped.startswith("- "):
+            if current is not None:
+                profiles.append(current)
+            rest = stripped[2:].strip()
+            if rest.startswith("id:"):
+                current = {"id": rest.split(":", 1)[1].strip().strip("'\"")}
+            else:
+                current = {}
+        elif current is not None and ":" in stripped:
+            if stripped.startswith("keys:") or stripped.startswith("keys :"):
+                in_keys = True
+                i += 1
+                continue
+            k, v = stripped.split(":", 1)
+            key = k.strip()
+            val = v.strip().strip("'\"")
+            if key == "remote_debugging_port":
+                try:
+                    current[key] = int(val)
+                except ValueError:
+                    current[key] = val
+            elif key == "after_port_kill_killall_chrome":
+                current[key] = val.lower() in ("true", "1", "yes")
+            elif key == "extra_args":
+                pass
+            else:
+                current[key] = val
+        i += 1
+    if current is not None:
+        profiles.append(current)
+    return profiles
+
+
+def _load_cdp_profiles_list() -> list[dict[str, Any]]:
+    try:
+        text = CONFIG_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"[CDP Runtime] read {CONFIG_PATH} failed: {exc}")
+        return []
+    if yaml is not None:
+        try:
+            cfg = yaml.safe_load(text) or {}
+            return list(cfg.get("cdp_profiles") or [])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[CDP Runtime] yaml parse failed, fallback parser: {exc}")
+    return _parse_cdp_profiles_fallback(text)
+
+
+def _find_local_cdp_profile(profile_id: str) -> dict[str, Any] | None:
+    for p in _load_cdp_profiles_list():
+        if str(p.get("id")) == profile_id:
+            return dict(p)
+    return None
+
+
 def _start_cdp_runtime(stop_event: threading.Event, no_bootstrap: bool = False) -> threading.Thread:
     def _read_runtime_cfg_with_fallback() -> dict[str, object]:
         # 优先 PyYAML；若环境无 yaml 包，则用简易文本解析（仅支持本项目 cdp_runtime 结构）
@@ -265,31 +355,44 @@ def _start_cdp_runtime(stop_event: threading.Event, no_bootstrap: bool = False) 
         interval_seconds = int(runtime_cfg.get("interval_seconds", 10))
         bootstrap_mode = str(runtime_cfg.get("bootstrap_mode") or "once").strip().lower()
         script_ids = [str(s).strip() for s in (runtime_cfg.get("bootstrap_scripts") or []) if str(s).strip()]
+
+        # CDP：只读本地 config.yaml，用 remote_debugging_port 是否可连判断；不依赖后端 /api/cdp/profiles
+        profile = _find_local_cdp_profile(profile_id)
+        if profile is None:
+            print(
+                f"[CDP Runtime] profile not found in {CONFIG_PATH}: {profile_id!r} "
+                f"(请检查 cdp_profiles[].id 与 cdp_runtime.profile_id 是否一致)"
+            )
+            return
+        if kill_and_start_chrome is None:
+            print("[CDP Runtime] 无法导入 kill_and_start_chrome，请从项目根目录运行并安装依赖。")
+            return
+        port_raw = profile.get("remote_debugging_port") or os.getenv("CDP_PORT") or 9222
+        port = int(port_raw)
+        host = (
+            str(profile.get("host") or os.getenv("CDP_HOST") or "127.0.0.1").strip()
+            or "127.0.0.1"
+        )
+        if _tcp_port_open(host, port):
+            print(f"[CDP Runtime] 端口已监听 {host}:{port}，视为 CDP 已在运行，跳过启动 Chrome。")
+        else:
+            try:
+                kill_and_start_chrome(profile)
+                print(f"[CDP Runtime] 已启动 Chrome（profile={profile_id}，调试端口 {port}）。")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[CDP Runtime] 启动 Chrome 失败: {exc}")
+                return
+
+        if no_bootstrap:
+            print("[CDP Runtime] --no-bootstrap enabled, skip bootstrap_scripts.")
+            return
         if not script_ids:
-            print("[CDP Runtime] No bootstrap_scripts configured, skip.")
+            print("[CDP Runtime] 未配置 bootstrap_scripts，跳过脚本编排。")
             return
 
         print("[CDP Runtime] waiting backend ready ...")
         if not _wait_backend_ready(timeout_seconds=90):
             print("[CDP Runtime] backend is not ready in time, skip.")
-            return
-
-        try:
-            profiles_data = _get_json(f"{BACKEND_URL}/api/cdp/profiles")
-            profiles = profiles_data.get("items") or []
-            profile = next((p for p in profiles if str(p.get("id")) == profile_id), None)
-            if profile is None:
-                print(f"[CDP Runtime] profile not found: {profile_id}")
-                return
-            port = int(profile.get("remote_debugging_port") or 9222)
-            host = str(profile.get("host") or "127.0.0.1").strip() or "127.0.0.1"
-            if _tcp_port_open(host, port):
-                print(f"[CDP Runtime] CDP already running on {host}:{port}, skip restart.")
-            else:
-                _post_json(f"{BACKEND_URL}/api/cdp/restart", {"profile_id": profile_id})
-                print(f"[CDP Runtime] CDP profile started: {profile_id} ({host}:{port})")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[CDP Runtime] CDP restart failed: {exc}")
             return
 
         def _trigger_once_round() -> None:
@@ -306,10 +409,6 @@ def _start_cdp_runtime(stop_event: threading.Event, no_bootstrap: bool = False) 
                     print(f"[CDP Runtime] trigger failed {sid}: HTTP {exc.code}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[CDP Runtime] trigger failed {sid}: {exc}")
-
-        if no_bootstrap:
-            print("[CDP Runtime] --no-bootstrap enabled, skip bootstrap_scripts.")
-            return
 
         if bootstrap_mode != "loop":
             print(f"[CDP Runtime] bootstrap mode=once, scripts={script_ids}")

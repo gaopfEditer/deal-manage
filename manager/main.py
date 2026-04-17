@@ -190,7 +190,9 @@ async def list_scripts():
 
 @app.get("/api/cdp/profiles")
 async def list_cdp_profiles():
-    return {"items": app.state.scheduler.config.get("cdp_profiles", [])}
+    # 每次从磁盘读取：run.py 可能复用已启动的旧 uvicorn，内存里的 scheduler.config 不会自动更新
+    cfg = load_config()
+    return {"items": list(cfg.get("cdp_profiles") or [])}
 
 
 @app.get("/api/data-views")
@@ -256,7 +258,8 @@ async def set_data_view_browsed(view_id: str, payload: DataViewBrowsedPayload):
 
 @app.post("/api/cdp/restart")
 async def cdp_restart(payload: CdpRestartPayload):
-    profiles: list[dict[str, Any]] = app.state.scheduler.config.get("cdp_profiles", [])
+    cfg = load_config()
+    profiles: list[dict[str, Any]] = list(cfg.get("cdp_profiles") or [])
     prof = next((p for p in profiles if str(p.get("id")) == payload.profile_id), None)
     if not prof:
         raise HTTPException(status_code=404, detail=f"CDP profile '{payload.profile_id}' not found")

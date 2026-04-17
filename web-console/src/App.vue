@@ -150,9 +150,29 @@
             {{ dataPostsGeneratedAt ? " · " : "" }}{{ dataPostsPlatformLabelsText }}
           </span>
         </div>
-        <div v-if="dataPostsRows.length" class="data-posts-cards">
+        <div class="data-posts-filters">
+          <el-select v-model="dataPostsStarFilter" placeholder="按星级筛选" style="width: 180px">
+            <el-option label="全部星级" value="all" />
+            <el-option label="5 星" :value="5" />
+            <el-option label="4 星及以上" :value="4" />
+            <el-option label="3 星及以上" :value="3" />
+            <el-option label="2 星及以上" :value="2" />
+            <el-option label="1 星及以上" :value="1" />
+            <el-option label="仅 0 星" :value="0" />
+          </el-select>
+          <el-input
+            v-model="dataPostsKeyword"
+            clearable
+            placeholder="文本筛选：标题/摘要/信号摘要/作者"
+            style="max-width: 360px"
+          />
+          <span class="data-posts-filter-count">
+            当前页筛选：{{ filteredDataPostsRows.length }} / {{ dataPostsRows.length }}
+          </span>
+        </div>
+        <div v-if="filteredDataPostsRows.length" class="data-posts-cards">
           <el-card
-            v-for="(row, idx) in dataPostsRows"
+            v-for="(row, idx) in filteredDataPostsRows"
             :key="row.id || row.href || `${row.title || 'post'}-${idx}`"
             class="data-post-card"
             shadow="hover"
@@ -164,7 +184,61 @@
               <el-link v-if="row.href" :href="row.href" target="_blank" type="primary">打开</el-link>
             </div>
             <div class="data-post-summary">
-              {{ truncateText(row.raw, 220) || "（暂无摘要）" }}
+              <div class="data-post-signal">
+                <span class="data-post-signal-label">交易信号</span>
+                <span class="data-post-signal-stars">
+                  {{ signalStarsText(getSignalStar(row)) }}
+                </span>
+                <span class="data-post-signal-score">
+                  {{ getSignalStar(row) }}/5
+                </span>
+                <el-tag
+                  size="small"
+                  :type="signalTagType(getSignalStar(row))"
+                  effect="plain"
+                >
+                  {{ signalTagText(getSignalStar(row)) }}
+                </el-tag>
+                <el-tag
+                  size="small"
+                  :type="isUsefulTagType(getUsefulValue(row))"
+                  effect="light"
+                >
+                  {{ isUsefulTagText(getUsefulValue(row)) }}
+                </el-tag>
+              </div>
+              <div class="data-post-signal-content" v-if="getSignalContent(row)">
+                {{ truncateText(getSignalContent(row), 260) }}
+              </div>
+              <div class="data-post-raw">
+                {{ truncateText(row.raw, 220) || "（暂无摘要）" }}
+              </div>
+              <div v-if="getImageUrls(row).length" class="data-post-images">
+                <div
+                  v-for="(imgUrl, imgIdx) in getImageUrls(row)"
+                  :key="`${row.href || row.id || idx}-img-${imgIdx}`"
+                  class="data-post-image-item"
+                >
+                  <img
+                    class="data-post-thumb"
+                    :src="imgUrl"
+                    :alt="row.title || 'post image'"
+                    loading="lazy"
+                    decoding="async"
+                    referrerpolicy="no-referrer"
+                  />
+                  <div class="data-post-image-popover">
+                    <img
+                      class="data-post-large"
+                      :src="imgUrl"
+                      :alt="row.title || 'post image preview'"
+                      loading="lazy"
+                      decoding="async"
+                      referrerpolicy="no-referrer"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="data-post-foot">
               <span v-if="row.author">{{ row.author }}</span>
@@ -250,6 +324,8 @@ const dataPostsPageSize = ref(50);
 const dataPostsCardName = ref("");
 const dataPostsGeneratedAt = ref("");
 const dataPostsPlatformLabels = ref(null);
+const dataPostsStarFilter = ref("all");
+const dataPostsKeyword = ref("");
 
 const dataPostsPlatformLabelsText = computed(() => {
   const pl = dataPostsPlatformLabels.value;
@@ -266,6 +342,35 @@ const dataPostsDialogTitle = computed(() => {
       ? `（version ${dataPostsVersion.value}）`
       : "";
   return `${base} ${v}`.trim();
+});
+
+const filteredDataPostsRows = computed(() => {
+  const rows = Array.isArray(dataPostsRows.value) ? dataPostsRows.value : [];
+  const starFilter = dataPostsStarFilter.value;
+  const kw = (dataPostsKeyword.value || "").trim().toLowerCase();
+  return rows.filter((row) => {
+    const star = getSignalStar(row);
+    if (starFilter !== "all") {
+      const f = Number(starFilter);
+      if (f === 0) {
+        if (star !== 0) return false;
+      } else if (star < f) {
+        return false;
+      }
+    }
+    if (!kw) return true;
+    const haystack = [
+      row?.title,
+      row?.raw,
+      getSignalContent(row),
+      row?.author,
+      row?.category,
+      row?.href,
+    ]
+      .map((x) => (x == null ? "" : String(x).toLowerCase()))
+      .join("\n");
+    return haystack.includes(kw);
+  });
 });
 
 const searchDialogVisible = ref(false);
@@ -401,6 +506,76 @@ function truncateText(s, n) {
   if (s == null || s === "") return "-";
   const str = String(s);
   return str.length <= n ? str : `${str.slice(0, n)}…`;
+}
+
+function normalizeSignalStar(v) {
+  const n = Number.parseInt(v, 10);
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(5, n));
+}
+
+function getSignalStar(row) {
+  return normalizeSignalStar(row?.signal_star ?? row?.star);
+}
+
+function getSignalContent(row) {
+  const v = row?.signal_content ?? row?.content;
+  if (v == null) return "";
+  return String(v);
+}
+
+function getUsefulValue(row) {
+  const v = row?.is_useful ?? row?.isUseful ?? row?.isUseFul;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  if (v == null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return null;
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return null;
+}
+
+function signalStarsText(star) {
+  const n = normalizeSignalStar(star);
+  if (n <= 0) return "☆☆☆☆☆";
+  return `${"★".repeat(n)}${"☆".repeat(5 - n)}`;
+}
+
+function getImageUrls(row) {
+  const list = row?.image_urls;
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((x) => (x == null ? "" : String(x).trim()))
+    .filter((x) => x.startsWith("http://") || x.startsWith("https://"));
+}
+
+function signalTagType(star) {
+  const n = normalizeSignalStar(star);
+  if (n >= 4) return "danger";
+  if (n >= 2) return "warning";
+  if (n >= 1) return "success";
+  return "info";
+}
+
+function signalTagText(star) {
+  const n = normalizeSignalStar(star);
+  if (n >= 4) return "强信号";
+  if (n >= 2) return "中信号";
+  if (n >= 1) return "弱信号";
+  return "无信号";
+}
+
+function isUsefulTagType(v) {
+  if (v === true) return "success";
+  if (v === false) return "info";
+  return "warning";
+}
+
+function isUsefulTagText(v) {
+  if (v === true) return "有用";
+  if (v === false) return "一般";
+  return "待判断";
 }
 
 async function openDataPosts(d) {
@@ -660,6 +835,17 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
 }
+.data-posts-filters {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.data-posts-filter-count {
+  color: #909399;
+  font-size: 12px;
+}
 .data-posts-cards {
   max-height: 72vh;
   overflow-y: auto;
@@ -694,6 +880,72 @@ onUnmounted(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.data-post-signal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.data-post-signal-label {
+  color: #909399;
+}
+.data-post-signal-stars {
+  color: #e6a23c;
+  letter-spacing: 1px;
+  font-weight: 600;
+}
+.data-post-signal-score {
+  color: #606266;
+  font-size: 12px;
+}
+.data-post-signal-content {
+  color: #303133;
+  margin-bottom: 6px;
+}
+.data-post-raw {
+  color: #606266;
+}
+.data-post-images {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.data-post-image-item {
+  position: relative;
+}
+.data-post-thumb {
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+  cursor: zoom-in;
+  background: #f5f7fa;
+}
+.data-post-image-popover {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 94px;
+  z-index: 10;
+  padding: 6px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #dcdfe6;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+}
+.data-post-image-item:hover .data-post-image-popover {
+  display: block;
+}
+.data-post-large {
+  display: block;
+  width: min(420px, 65vw);
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #f5f7fa;
+}
 .data-post-foot {
   color: #909399;
   font-size: 12px;
@@ -704,6 +956,9 @@ onUnmounted(() => {
 @media (max-width: 960px) {
   .data-posts-cards {
     grid-template-columns: 1fr;
+  }
+  .data-posts-filters {
+    align-items: stretch;
   }
 }
 .grid {

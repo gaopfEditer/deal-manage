@@ -11,6 +11,34 @@ from typing import Any
 _LIST_KEYS = ("posts", "items", "data", "records", "list", "rows", "entries")
 
 
+def _normalize_signal_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """兼容不同来源字段命名，统一信号/摘要/有用性。"""
+    out = dict(row)
+    # 兼容 TrendRadar: star / content / isUseful(isUseFul)
+    star_raw = out.get("signal_star", out.get("star", 0))
+    try:
+        star = int(star_raw)
+    except (TypeError, ValueError):
+        star = 0
+    out["signal_star"] = max(0, min(5, star))
+    out["star"] = out["signal_star"]
+
+    content_raw = out.get("signal_content", out.get("content", ""))
+    out["signal_content"] = "" if content_raw is None else str(content_raw)
+    out["content"] = out["signal_content"]
+
+    useful_raw = out.get("is_useful", out.get("isUseful", out.get("isUseFul", False)))
+    if isinstance(useful_raw, bool):
+        useful = useful_raw
+    elif isinstance(useful_raw, (int, float)):
+        useful = bool(useful_raw)
+    else:
+        useful = str(useful_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    out["is_useful"] = useful
+    out["isUseful"] = useful
+    return out
+
+
 def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
     """
     扁平化帖子列表，支持：
@@ -24,7 +52,7 @@ def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         for i, p in enumerate(data):
             if isinstance(p, dict):
-                row = dict(p)
+                row = _normalize_signal_fields(p)
                 row.setdefault("_author_slug", "")
                 row.setdefault("_url_key", str(i))
                 out.append(row)
@@ -43,7 +71,7 @@ def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
                     continue
                 if not any(k in post for k in ("href", "title", "raw")):
                     continue
-                row = dict(post)
+                row = _normalize_signal_fields(post)
                 row["_author_slug"] = str(author_slug)
                 row["_url_key"] = str(url_key)
                 out.append(row)
@@ -53,7 +81,7 @@ def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
     if isinstance(posts, list):
         for i, p in enumerate(posts):
             if isinstance(p, dict):
-                row = dict(p)
+                row = _normalize_signal_fields(p)
                 row.setdefault("_author_slug", "")
                 row.setdefault("_url_key", str(i))
                 out.append(row)
@@ -67,7 +95,7 @@ def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
         if isinstance(v, list):
             for i, p in enumerate(v):
                 if isinstance(p, dict):
-                    row = dict(p)
+                    row = _normalize_signal_fields(p)
                     row.setdefault("_author_slug", "")
                     row.setdefault("_url_key", str(i))
                     out.append(row)
@@ -75,7 +103,7 @@ def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
                 return out
 
     if any(k in data for k in ("href", "title", "raw", "author")):
-        row = dict(data)
+        row = _normalize_signal_fields(data)
         row.setdefault("_author_slug", "")
         row.setdefault("_url_key", "")
         out.append(row)

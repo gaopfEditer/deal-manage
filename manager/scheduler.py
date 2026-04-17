@@ -147,6 +147,15 @@ class ScriptScheduler:
                     f"[{self._now()}] Script is already running, skip this trigger."
                 )
                 return
+            # 在排队执行前就标记为 running，避免 CDP 等待阶段 API 仍返回 online，
+            # 被 run.py / 前端误判为「已结束」或「从未开始」。
+            runtime.status = "running"
+            runtime.last_error = None
+            runtime.last_run_time = self._now()
+            await runtime.log_queue.put(
+                f"[{self._now()}] Queued: action={action!r}"
+                + ("" if keyword is None else f", keyword={keyword!r}")
+            )
             runtime.task = asyncio.create_task(self._run_subprocess(script_id, action, keyword))
 
     async def stop(self, script_id: str) -> dict[str, Any]:
@@ -199,22 +208,21 @@ class ScriptScheduler:
     async def _run_subprocess(self, script_id: str, action: str, keyword: str | None) -> None:
         script_cfg = self._scripts[script_id]
         runtime = self._runtime[script_id]
-        runtime.status = "running"
-        runtime.last_error = None
-        runtime.last_run_time = self._now()
 
-        # 如果脚本依赖 Chrome DevTools Protocol（CDP），需要先验证调试端口可连通
-        if bool(script_cfg.get("cdp", False)):
-            await self._wait_for_cdp(runtime, script_cfg)
-
-        cmd, run_cwd = self._build_command(script_cfg, action, keyword)
-        await runtime.log_queue.put(f"[{self._now()}] Execute: {' '.join(cmd)}")
         collected: list[str] = []
         collected_chars = 0
         max_collect_chars = int(os.getenv("PROMAT_MAX_COLLECT_CHARS", "50000"))
         try:
+            # 如果脚本依赖 Chrome DevTools Protocol（CDP），需要先验证调试端口可连通
+            if bool(script_cfg.get("cdp", False)):
+                await self._wait_for_cdp(runtime, script_cfg)
+
+            cmd, run_cwd = self._build_command(script_cfg, action, keyword)
+            await runtime.log_queue.put(f"[{self._now()}] Execute: {' '.join(cmd)}")
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
+            # 子进程默认块缓冲时，scheduler 用 readline 拉日志会长时间无输出，看起来像「未执行」
+            env.setdefault("PYTHONUNBUFFERED", "1")
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(run_cwd),
@@ -301,6 +309,7 @@ class ScriptScheduler:
         deadline = time.monotonic() + max_wait_seconds
 
         last_exc: Exception | None = None
+        next_heartbeat = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             try:
                 # 这里不需要完整协议握手，只要能建立 TCP 连接即可
@@ -314,6 +323,14 @@ class ScriptScheduler:
                 return
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                now = time.monotonic()
+                if now >= next_heartbeat:
+                    remain = max(0.0, deadline - now)
+                    await runtime.log_queue.put(
+                        f"[{self._now()}] CDP still waiting {host}:{port} "
+                        f"(~{remain:.0f}s left) ..."
+                    )
+                    next_heartbeat = now + 5.0
                 await asyncio.sleep(sleep_seconds)
 
         raise TimeoutError(
