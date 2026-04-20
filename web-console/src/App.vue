@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="header">
-      <div class="title">任务矩阵</div>
+      <div class="title">任务列表</div>
       <el-button type="primary" @click="refreshAll">刷新状态</el-button>
     </div>
 
