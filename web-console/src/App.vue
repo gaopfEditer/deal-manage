@@ -239,6 +239,20 @@
                   </div>
                 </div>
               </div>
+              <div
+                v-if="getVideoUrl(row)"
+                class="data-post-video"
+                @contextmenu.prevent="openVideoContextMenu($event, row)"
+                title="右键可操作：新页面打开 / 解析文字稿"
+              >
+                <div class="data-post-video-thumb">
+                  <span class="data-post-video-icon">▶</span>
+                </div>
+                <div class="data-post-video-meta">
+                  <div class="data-post-video-title">视频内容</div>
+                  <div class="data-post-video-url">{{ truncateText(getVideoUrl(row), 120) }}</div>
+                </div>
+              </div>
             </div>
             <div class="data-post-foot">
               <span v-if="row.author">{{ row.author }}</span>
@@ -300,6 +314,19 @@
         <el-button type="success" @click="publishDraft">发布到 Memos</el-button>
       </template>
     </el-dialog>
+
+    <div
+      v-if="videoMenuVisible"
+      class="video-context-menu"
+      :style="{ left: `${videoMenuX}px`, top: `${videoMenuY}px` }"
+    >
+      <button type="button" class="video-menu-item" @click="openVideoInNewTab">
+        新页面打开
+      </button>
+      <button type="button" class="video-menu-item" @click="openVideoTranscript">
+        解析文字稿
+      </button>
+    </div>
   </div>
 </template>
 
@@ -389,6 +416,10 @@ let pollTimer = null;
 const markdownDialogVisible = ref(false);
 const markdownDraft = ref("");
 const markdownTargetId = ref("");
+const videoMenuVisible = ref(false);
+const videoMenuX = ref(0);
+const videoMenuY = ref(0);
+const videoMenuUrl = ref("");
 
 function draftKey(scriptId) {
   return `memo_draft:${scriptId}`;
@@ -548,6 +579,44 @@ function getImageUrls(row) {
   return list
     .map((x) => (x == null ? "" : String(x).trim()))
     .filter((x) => x.startsWith("http://") || x.startsWith("https://"));
+}
+
+function getVideoUrl(row) {
+  const v = row?.video_url ?? row?.videoUrl ?? row?.video;
+  if (v == null) return "";
+  const s = String(v).trim();
+  if (!s) return "";
+  if (s.startsWith("http://") || s.startsWith("https://")) return s;
+  return "";
+}
+
+function closeVideoContextMenu() {
+  videoMenuVisible.value = false;
+  videoMenuUrl.value = "";
+}
+
+function openVideoContextMenu(evt, row) {
+  const url = getVideoUrl(row);
+  if (!url) return;
+  videoMenuUrl.value = url;
+  videoMenuX.value = evt.clientX;
+  videoMenuY.value = evt.clientY;
+  videoMenuVisible.value = true;
+}
+
+function openVideoInNewTab() {
+  const url = videoMenuUrl.value;
+  closeVideoContextMenu();
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function openVideoTranscript() {
+  const url = videoMenuUrl.value;
+  closeVideoContextMenu();
+  if (!url) return;
+  const transcriptUrl = `https://www.txyz.ai/?url=${encodeURIComponent(url)}`;
+  window.open(transcriptUrl, "_blank", "noopener,noreferrer");
 }
 
 function signalTagType(star) {
@@ -785,9 +854,16 @@ watch(drawerVisible, (v) => {
   }
 });
 
+watch(dataPostsVisible, (v) => {
+  if (!v) closeVideoContextMenu();
+});
+
 onMounted(() => {
   refreshAll();
   pollTimer = setInterval(() => loadCards(), 300000);
+  window.addEventListener("click", closeVideoContextMenu);
+  window.addEventListener("scroll", closeVideoContextMenu, true);
+  window.addEventListener("resize", closeVideoContextMenu);
 });
 
 onUnmounted(() => {
@@ -796,6 +872,9 @@ onUnmounted(() => {
     eventSource.value.close();
     eventSource.value = null;
   }
+  window.removeEventListener("click", closeVideoContextMenu);
+  window.removeEventListener("scroll", closeVideoContextMenu, true);
+  window.removeEventListener("resize", closeVideoContextMenu);
 });
 </script>
 
@@ -944,6 +1023,68 @@ onUnmounted(() => {
   max-height: 420px;
   object-fit: contain;
   border-radius: 8px;
+  background: #f5f7fa;
+}
+.data-post-video {
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: context-menu;
+  background: #fafafa;
+}
+.data-post-video-thumb {
+  width: 88px;
+  height: 60px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.data-post-video-icon {
+  font-size: 22px;
+  font-weight: 700;
+}
+.data-post-video-meta {
+  min-width: 0;
+  flex: 1;
+}
+.data-post-video-title {
+  color: #303133;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.data-post-video-url {
+  color: #909399;
+  font-size: 12px;
+  word-break: break-all;
+}
+.video-context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 150px;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+}
+.video-menu-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #303133;
+}
+.video-menu-item:hover {
   background: #f5f7fa;
 }
 .data-post-foot {

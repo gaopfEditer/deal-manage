@@ -36,6 +36,9 @@ def _normalize_signal_fields(row: dict[str, Any]) -> dict[str, Any]:
         useful = str(useful_raw).strip().lower() in {"1", "true", "yes", "y", "on"}
     out["is_useful"] = useful
     out["isUseful"] = useful
+
+    video_raw = out.get("video_url", out.get("videoUrl", out.get("video", "")))
+    out["video_url"] = "" if video_raw is None else str(video_raw).strip()
     return out
 
 
