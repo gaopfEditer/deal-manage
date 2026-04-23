@@ -21,6 +21,9 @@ projects:
         pass_action: false
         use_agent: true
         agent_type: "qwen"
+        send_to_telegram: true
+        telegram_chat_id: -5289237674
+        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
         schedule:
           mode: interval
           seconds: 3999
@@ -34,6 +37,9 @@ projects:
         name: Crawler
         icon: "🛰"
         run: "python crawler.py"
+        send_to_telegram: true
+        telegram_chat_id: -5284939836
+        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
         schedule:
           mode: interval
           seconds: 2998
@@ -51,6 +57,19 @@ projects:
         schedule:
           mode: interval
           seconds: 6000000
+
+  - id: whisper
+    name: Whisper
+    script_path: 'D:\frontend\main\1.operations\WhisprRT'
+    venv_path: ".venv"
+    scripts:
+      - id: run
+        name: Run
+        icon: "🛰"
+        run: "python batch_whisperx_nodownload.py"
+        schedule:
+          mode: interval
+          seconds: 6000000000
 
 # CDP：在 Web「CDP」页按配置结束占用端口的进程并启动 Chrome
 cdp_profiles: 
@@ -82,7 +101,7 @@ cdp_runtime:
 # 数据视图：JSON 文件路径 → 卡片（记录条数 / 已浏览 / 未读），浏览计数存在 manager/state/data_views_browse.json
 data_views:
   - id: binance-posts-state
-    name: 币安动态状态
+    name: 广场动态状态
     path: 'D:\frontend\main\python\auto-deal-eth\binance_posts_state.json'
   - id: trendradar-posts-state
     name: TrendRadar / X 推文

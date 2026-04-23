@@ -29,10 +29,21 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 
 # 根据运行环境选择不同配置：优先显式 RUN_ENV，其次按平台推断。
 _RUN_ENV = os.getenv("RUN_ENV", "").strip().lower()
-if _RUN_ENV == "mac" or (_RUN_ENV == "" and sys.platform == "darwin"):
+if _RUN_ENV == "mac":
     CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
-elif _RUN_ENV == "win" or (_RUN_ENV == "" and os.name == "nt"):
+elif _RUN_ENV == "win":
     CONFIG_PATH = ROOT_DIR / "confi-win.yaml"
+elif _RUN_ENV == "":
+    # 默认优先主配置，避免同目录多份配置导致“改了 config.yaml 但运行不生效”
+    default_cfg = ROOT_DIR / "config.yaml"
+    if default_cfg.exists():
+        CONFIG_PATH = default_cfg
+    elif sys.platform == "darwin":
+        CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
+    elif os.name == "nt":
+        CONFIG_PATH = ROOT_DIR / "confi-win.yaml"
+    else:
+        CONFIG_PATH = ROOT_DIR / "config.yaml"
 else:
     CONFIG_PATH = ROOT_DIR / "config.yaml"
 
@@ -68,6 +79,23 @@ if sys.platform.startswith("win"):
 
 
 def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    def _yaml_bool_field(item: dict[str, Any], key: str, default: bool = False) -> bool:
+        if key in item:
+            v = item.get(key)
+            if isinstance(v, bool):
+                return v
+            if v is None:
+                return default
+            return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
+        # 兼容误写成 "send_to_telegram:true" 这种 key（缺少空格）
+        prefix = f"{key}:"
+        for k in item.keys():
+            ks = str(k).strip()
+            if ks.startswith(prefix):
+                raw = ks[len(prefix) :].strip()
+                return raw.lower() in {"1", "true", "yes", "y", "on"}
+        return default
+
     # 兼容两种结构：
     # 1) 旧版: scripts: [...]
     # 2) 新版: projects: [{ id, script_path, venv_path, scripts: [...] }]
@@ -109,6 +137,9 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
                     # 默认保持兼容：仍会传 --action {action}。
                     "pass_action": item.get("pass_action", True),
                     "to_memos": item.get("to_memos", False),
+                    "send_to_telegram": _yaml_bool_field(item, "send_to_telegram", False),
+                    "telegram_chat_id": item.get("telegram_chat_id"),
+                    "telegram_token": item.get("telegram_token"),
                     "schedule": item.get("schedule", {}),
                 }
             )
@@ -312,6 +343,17 @@ async def clear_logs(script_id: str):
         return {"ok": True, "item": data}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/notify-telegram")
+async def notify_telegram(script_id: str):
+    try:
+        data = await app.state.scheduler.notify_telegram(script_id)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/scripts/{script_id}/sync-memos")

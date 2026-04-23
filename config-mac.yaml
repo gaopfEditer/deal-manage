@@ -21,6 +21,9 @@ projects:
         pass_action: false
         use_agent: true
         agent_type: "qwen"
+        send_to_telegram: true
+        telegram_chat_id: -5289237674
+        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
         schedule:
           mode: interval
           seconds: 1800
@@ -34,6 +37,9 @@ projects:
         name: Crawler
         icon: "🛰"
         run: "python crawler.py"
+        send_to_telegram: true
+        telegram_chat_id: -5284939836
+        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
         schedule:
           mode: interval
           seconds: 3222

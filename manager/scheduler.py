@@ -16,6 +16,7 @@ from typing import Any
 import time
 
 import httpx
+from .data_views_service import extract_posts_flat, read_json_file
 
 
 @dataclass
@@ -43,6 +44,8 @@ class ScriptScheduler:
         self._periodic_tasks: list[asyncio.Task] = []
         self._lock = asyncio.Lock()
         self._promat_dir = self.root_dir / "promat"
+        self._telegram_state_path = self.root_dir / "manager" / "state" / "telegram_sent_today.json"
+        self._telegram_state_path.parent.mkdir(parents=True, exist_ok=True)
 
     def list_cards(self) -> list[dict[str, Any]]:
         cards: list[dict[str, Any]] = []
@@ -205,6 +208,18 @@ class ScriptScheduler:
                 break
         return {"script_id": script_id, "cleared": cleared}
 
+    async def notify_telegram(self, script_id: str) -> dict[str, Any]:
+        if script_id not in self._scripts:
+            raise KeyError(f"Script '{script_id}' not found")
+        runtime = self._runtime[script_id]
+        script_cfg = self._scripts[script_id]
+        await self._maybe_send_telegram_notifications(
+            script_id=script_id,
+            script_cfg=script_cfg,
+            runtime=runtime,
+        )
+        return {"script_id": script_id, "ok": True}
+
     async def _run_subprocess(self, script_id: str, action: str, keyword: str | None) -> None:
         script_cfg = self._scripts[script_id]
         runtime = self._runtime[script_id]
@@ -263,6 +278,11 @@ class ScriptScheduler:
             if exit_code == 0:
                 runtime.status = "online"
                 await runtime.log_queue.put(f"[{self._now()}] Exit code: 0")
+                await self._maybe_send_telegram_notifications(
+                    script_id=script_id,
+                    script_cfg=script_cfg,
+                    runtime=runtime,
+                )
             else:
                 runtime.status = "error"
                 runtime.last_error = f"Exit code {exit_code}"
@@ -529,6 +549,188 @@ class ScriptScheduler:
                 await runtime.log_queue.put(
                     f"[{self._now()}] PROMAT memo archive failed: {type(exc).__name__}: {exc!r}"
                 )
+
+    @staticmethod
+    def _truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _load_telegram_state(self) -> dict[str, Any]:
+        today = dt.datetime.now().strftime("%Y-%m-%d")
+        if not self._telegram_state_path.is_file():
+            return {"date": today, "sent": {}}
+        try:
+            data = json.loads(self._telegram_state_path.read_text(encoding="utf-8", errors="replace"))
+            if not isinstance(data, dict):
+                return {"date": today, "sent": {}}
+            if data.get("date") != today:
+                return {"date": today, "sent": {}}
+            sent = data.get("sent")
+            if not isinstance(sent, dict):
+                data["sent"] = {}
+            return data
+        except Exception:
+            return {"date": today, "sent": {}}
+
+    def _save_telegram_state(self, state: dict[str, Any]) -> None:
+        self._telegram_state_path.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _resolve_data_view_for_script(self, script_cfg: dict[str, Any]) -> dict[str, Any] | None:
+        views = list(self.config.get("data_views") or [])
+        if not views:
+            return None
+        project_dir = self._resolve_project_dir(str(script_cfg.get("script_path", "."))).resolve()
+        for v in views:
+            raw = str(v.get("path") or "").strip()
+            if not raw:
+                continue
+            p = Path(raw).expanduser()
+            if not p.is_absolute():
+                p = (self.root_dir / p).resolve()
+            else:
+                p = p.resolve()
+            # data view 文件位于脚本项目目录内时，视为该脚本对应数据源
+            try:
+                p.relative_to(project_dir)
+                return v
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _post_star_value(row: dict[str, Any]) -> int:
+        raw = row.get("signal_star", row.get("star", 0))
+        try:
+            return max(0, min(5, int(raw)))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _post_message_text(row: dict[str, Any]) -> str:
+        for k in ("content", "signal_content", "title"):
+            v = row.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    @staticmethod
+    def _post_url(row: dict[str, Any]) -> str:
+        for k in ("href", "url", "link"):
+            v = row.get(k)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    async def _send_telegram_message(self, token: str, chat_id: str, text: str) -> None:
+        api = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+            resp = await client.post(api, json=payload)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Telegram send failed status={resp.status_code}, body={resp.text[:500]!r}")
+
+    async def _maybe_send_telegram_notifications(
+        self,
+        *,
+        script_id: str,
+        script_cfg: dict[str, Any],
+        runtime: ScriptRuntime,
+    ) -> None:
+        await runtime.log_queue.put(
+            f"[{self._now()}] Telegram notify: enter module for script={script_id}."
+        )
+        if not self._truthy(script_cfg.get("send_to_telegram")):
+            await runtime.log_queue.put(
+                f"[{self._now()}] Telegram notify: disabled by send_to_telegram={script_cfg.get('send_to_telegram')!r}."
+            )
+            return
+        token = str(script_cfg.get("telegram_token") or "").strip()
+        chat_id = str(script_cfg.get("telegram_chat_id") or "").strip()
+        await runtime.log_queue.put(
+            f"[{self._now()}] Telegram notify: config loaded chat_id={chat_id!r}, token_set={bool(token)}."
+        )
+        if not token or not chat_id:
+            await runtime.log_queue.put(
+                f"[{self._now()}] Telegram notify skipped: missing telegram_token or telegram_chat_id."
+            )
+            return
+
+        view = self._resolve_data_view_for_script(script_cfg)
+        if not view:
+            await runtime.log_queue.put(
+                f"[{self._now()}] Telegram notify skipped: no matched data_view for script."
+            )
+            return
+        await runtime.log_queue.put(
+            f"[{self._now()}] Telegram notify: matched data_view id={view.get('id')!r}."
+        )
+
+        path_raw = str(view.get("path") or "").strip()
+        data_path = Path(path_raw).expanduser()
+        if not data_path.is_absolute():
+            data_path = (self.root_dir / data_path).resolve()
+        await runtime.log_queue.put(
+            f"[{self._now()}] Telegram notify: reading posts file {data_path}."
+        )
+        data, err = read_json_file(data_path)
+        if err:
+            await runtime.log_queue.put(
+                f"[{self._now()}] Telegram notify skipped: data_view read failed {err}."
+            )
+            return
+
+        rows = extract_posts_flat(data)
+        if not rows:
+            await runtime.log_queue.put(f"[{self._now()}] Telegram notify: no posts found in data file.")
+            return
+        state = self._load_telegram_state()
+        sent = state.setdefault("sent", {})
+        sent_urls = set(str(x) for x in (sent.get(script_id) or []))
+
+        to_send: list[tuple[str, str]] = []
+        for row in rows:
+            if self._post_star_value(row) <= 4:
+                continue
+            url = self._post_url(row)
+            if not url or url in sent_urls:
+                continue
+            text = self._post_message_text(row)
+            if not text:
+                continue
+            to_send.append((url, text))
+
+        await runtime.log_queue.put(
+            f"[{self._now()}] Telegram notify: candidates star>4={len(to_send)}, dedup_cache={len(sent_urls)}."
+        )
+
+        if not to_send:
+            await runtime.log_queue.put(f"[{self._now()}] Telegram notify: no new star>4 posts.")
+            return
+
+        sent_count = 0
+        for url, text in to_send:
+            msg = f"【{script_id}】\n{text}\n\n{url}"
+            try:
+                await self._send_telegram_message(token=token, chat_id=chat_id, text=msg)
+            except Exception as exc:  # noqa: BLE001
+                await runtime.log_queue.put(
+                    f"[{self._now()}] Telegram send failed: {type(exc).__name__}: {exc!r}"
+                )
+                continue
+            sent_urls.add(url)
+            sent_count += 1
+
+        sent[script_id] = sorted(sent_urls)
+        self._save_telegram_state(state)
+        await runtime.log_queue.put(
+            f"[{self._now()}] Telegram notify done: sent={sent_count}, dedup_cache={len(sent_urls)}."
+        )
 
     def _memos_access_token(self) -> str:
         return (os.getenv("MEMOS_ACCESS_TOKEN") or os.getenv("MEMOS_ACCSEE_TOKEN") or "").strip()

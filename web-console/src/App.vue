@@ -732,6 +732,45 @@ async function runFetch(item) {
   await fetch(`/api/scripts/${item.id}/fetch`, { method: "POST" });
   openDrawer(item);
   loadCards();
+  const done = await waitScriptDone(item.id, 1800);
+  if (!done) {
+    ElMessage.warning("任务执行等待超时，未触发 Telegram 通知");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/scripts/${item.id}/notify-telegram`, { method: "POST" });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(`Telegram 通知触发失败：${data?.detail || res.statusText || "request failed"}`);
+      return;
+    }
+    ElMessage.success("任务完成，已触发 Telegram 通知流程");
+  } catch {
+    ElMessage.error("Telegram 通知触发失败");
+  }
+}
+
+async function waitScriptDone(scriptId, timeoutSeconds = 1800) {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch("/api/scripts");
+      const data = await res.json();
+      const items = data?.items || [];
+      const target = items.find((x) => x?.id === scriptId);
+      if (!target) return false;
+      if (target.status !== "running") return true;
+    } catch {
+      // ignore and retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return false;
 }
 
 async function stopTask(item) {
