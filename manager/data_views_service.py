@@ -291,6 +291,12 @@ def get_data_view_posts(
     version = data.get("version") if isinstance(data, dict) else None
     generated_at = data.get("generated_at") if isinstance(data, dict) else None
     platform_labels = data.get("platform_labels") if isinstance(data, dict) else None
+    # 币安等：posts 为 dict 时，顶层键（如作者 slug）供前端筛选
+    posts_group_keys: list[str] = []
+    if isinstance(data, dict):
+        posts = data.get("posts")
+        if isinstance(posts, dict):
+            posts_group_keys = sorted((str(k) for k in posts.keys()), key=lambda x: (x.lower(), x))
     return {
         "items": page,
         "total": total,
@@ -299,4 +305,5 @@ def get_data_view_posts(
         "version": version,
         "generated_at": generated_at,
         "platform_labels": platform_labels,
+        "posts_group_keys": posts_group_keys,
     }

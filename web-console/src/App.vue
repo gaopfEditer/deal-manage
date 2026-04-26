@@ -151,7 +151,18 @@
           </span>
         </div>
         <div class="data-posts-filters">
-          <el-select v-model="dataPostsStarFilter" placeholder="按星级筛选" style="width: 180px">
+          <el-select
+            v-if="isBinancePostsDataView && dataPostsGroupKeys.length"
+            v-model="currentDataPostsBinanceAuthor"
+            clearable
+            filterable
+            placeholder="按文件 posts 顶层键筛选"
+            style="width: 220px"
+          >
+            <el-option label="全部键" value="" />
+            <el-option v-for="k in dataPostsGroupKeys" :key="k" :label="k" :value="k" />
+          </el-select>
+          <el-select v-model="currentDataPostsStarFilter" placeholder="按星级筛选" style="width: 180px">
             <el-option label="全部星级" value="all" />
             <el-option label="5 星" :value="5" />
             <el-option label="4 星及以上" :value="4" />
@@ -178,8 +189,18 @@
             shadow="hover"
           >
             <div class="data-post-card-head">
-              <div class="data-post-title">
-                {{ row.title || "（无标题）" }}
+              <div class="data-post-title-wrap">
+                <el-tooltip
+                  :disabled="!getPostSummary(row)"
+                  :content="getPostSummary(row)"
+                  placement="top"
+                  :show-after="350"
+                  popper-class="data-post-summary-tooltip"
+                >
+                  <div class="data-post-title">
+                    {{ row.title || "（无标题）" }}
+                  </div>
+                </el-tooltip>
               </div>
               <el-link v-if="row.href" :href="row.href" target="_blank" type="primary">打开</el-link>
             </div>
@@ -207,11 +228,17 @@
                   {{ isUsefulTagText(getUsefulValue(row)) }}
                 </el-tag>
               </div>
-              <div class="data-post-signal-content" v-if="getSignalContent(row)">
-                {{ truncateText(getSignalContent(row), 260) }}
-              </div>
-              <div class="data-post-raw">
-                {{ truncateText(row.raw, 220) || "（暂无摘要）" }}
+              <div v-if="getSignalContent(row)" class="data-post-signal-content-wrap">
+                <el-tooltip
+                  :content="getSignalContent(row)"
+                  placement="top"
+                  :show-after="300"
+                  popper-class="data-post-signal-tooltip"
+                >
+                  <div class="data-post-signal-content">
+                    {{ getSignalContent(row) }}
+                  </div>
+                </el-tooltip>
               </div>
               <div v-if="getImageUrls(row).length" class="data-post-images">
                 <div
@@ -351,7 +378,11 @@ const dataPostsPageSize = ref(50);
 const dataPostsCardName = ref("");
 const dataPostsGeneratedAt = ref("");
 const dataPostsPlatformLabels = ref(null);
-const dataPostsStarFilter = ref("all");
+/** 与 config data_views[].id 一致：币安状态文件为 posts 嵌套 dict 结构 */
+const BINANCE_POSTS_VIEW_ID = "binance-posts-state";
+const dataPostsStarFilterByView = ref({});
+const dataPostsBinanceAuthorByView = ref({});
+const dataPostsGroupKeys = ref([]);
 const dataPostsKeyword = ref("");
 
 const dataPostsPlatformLabelsText = computed(() => {
@@ -371,11 +402,53 @@ const dataPostsDialogTitle = computed(() => {
   return `${base} ${v}`.trim();
 });
 
+const isBinancePostsDataView = computed(
+  () => dataPostsViewId.value === BINANCE_POSTS_VIEW_ID
+);
+
+const currentDataPostsStarFilter = computed({
+  get() {
+    const id = dataPostsViewId.value;
+    if (!id) return "all";
+    return dataPostsStarFilterByView.value[id] ?? "all";
+  },
+  set(v) {
+    const id = dataPostsViewId.value;
+    if (!id) return;
+    dataPostsStarFilterByView.value = { ...dataPostsStarFilterByView.value, [id]: v };
+  },
+});
+
+const currentDataPostsBinanceAuthor = computed({
+  get() {
+    const id = dataPostsViewId.value;
+    if (!id) return "";
+    return dataPostsBinanceAuthorByView.value[id] ?? "";
+  },
+  set(v) {
+    const id = dataPostsViewId.value;
+    if (!id) return;
+    dataPostsBinanceAuthorByView.value = {
+      ...dataPostsBinanceAuthorByView.value,
+      [id]: v == null || v === "" ? "" : String(v),
+    };
+  },
+});
+
 const filteredDataPostsRows = computed(() => {
   const rows = Array.isArray(dataPostsRows.value) ? dataPostsRows.value : [];
-  const starFilter = dataPostsStarFilter.value;
+  const viewId = dataPostsViewId.value;
+  const starFilter = dataPostsStarFilterByView.value[viewId] ?? "all";
+  const binanceAuthor =
+    viewId === BINANCE_POSTS_VIEW_ID
+      ? String(dataPostsBinanceAuthorByView.value[viewId] ?? "").trim()
+      : "";
   const kw = (dataPostsKeyword.value || "").trim().toLowerCase();
   return rows.filter((row) => {
+    if (binanceAuthor) {
+      const slug = String(row?._author_slug ?? "").trim();
+      if (slug !== binanceAuthor) return false;
+    }
     const star = getSignalStar(row);
     if (starFilter !== "all") {
       const f = Number(starFilter);
@@ -389,10 +462,14 @@ const filteredDataPostsRows = computed(() => {
     const haystack = [
       row?.title,
       row?.raw,
+      row?.summary,
+      row?.excerpt,
+      row?.description,
       getSignalContent(row),
       row?.author,
       row?.category,
       row?.href,
+      row?._author_slug,
     ]
       .map((x) => (x == null ? "" : String(x).toLowerCase()))
       .join("\n");
@@ -555,6 +632,20 @@ function getSignalContent(row) {
   return String(v);
 }
 
+/** 标题旁悬浮提示用：正文/摘要（原 data-post-raw 展示字段） */
+function getPostSummary(row) {
+  if (!row) return "";
+  const v =
+    row.summary ??
+    row.excerpt ??
+    row.description ??
+    row.snippet ??
+    row.raw;
+  if (v == null) return "";
+  const s = String(v).trim();
+  return s;
+}
+
 function getUsefulValue(row) {
   const v = row?.is_useful ?? row?.isUseful ?? row?.isUseFul;
   if (typeof v === "boolean") return v;
@@ -678,6 +769,7 @@ async function loadDataPostsPage() {
       dataPostsVersion.value = null;
       dataPostsGeneratedAt.value = "";
       dataPostsPlatformLabels.value = null;
+      dataPostsGroupKeys.value = [];
       return;
     }
     dataPostsRows.value = data.items || [];
@@ -685,6 +777,8 @@ async function loadDataPostsPage() {
     dataPostsVersion.value = data.version ?? null;
     dataPostsGeneratedAt.value = data.generated_at || "";
     dataPostsPlatformLabels.value = data.platform_labels ?? null;
+    const keys = data.posts_group_keys;
+    dataPostsGroupKeys.value = Array.isArray(keys) ? keys.map((k) => String(k)) : [];
   } finally {
     dataPostsLoading.value = false;
   }
@@ -968,7 +1062,7 @@ onUnmounted(() => {
   max-height: 72vh;
   overflow-y: auto;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   padding-right: 4px;
 }
@@ -982,13 +1076,22 @@ onUnmounted(() => {
   gap: 12px;
   margin-bottom: 8px;
 }
-.data-post-title {
+.data-post-title-wrap {
   flex: 1;
   min-width: 0;
+}
+.data-post-title {
   font-size: 15px;
   font-weight: 600;
   color: #303133;
   line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+  cursor: default;
 }
 .data-post-summary {
   color: #606266;
@@ -1016,12 +1119,21 @@ onUnmounted(() => {
   color: #606266;
   font-size: 12px;
 }
+.data-post-signal-content-wrap {
+  width: 100%;
+  min-width: 0;
+}
 .data-post-signal-content {
   color: #303133;
   margin-bottom: 6px;
-}
-.data-post-raw {
-  color: #606266;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  word-break: break-word;
+  white-space: normal;
+  cursor: default;
 }
 .data-post-images {
   margin-top: 8px;
@@ -1133,6 +1245,11 @@ onUnmounted(() => {
   flex-wrap: wrap;
   gap: 10px;
 }
+@media (max-width: 1200px) {
+  .data-posts-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 960px) {
   .data-posts-cards {
     grid-template-columns: 1fr;
@@ -1197,5 +1314,24 @@ body {
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
+}
+
+/* 帖子弹窗 teleport 到 body，需非 scoped；整体缩小 20% 以同屏展示更多 */
+.data-posts-dialog .data-posts-scale {
+  zoom: 0.8;
+}
+
+.data-post-summary-tooltip {
+  max-width: min(520px, 78vw) !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.data-post-signal-tooltip {
+  max-width: min(560px, 82vw) !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
 }
 </style>
