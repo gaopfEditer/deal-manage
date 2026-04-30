@@ -90,14 +90,14 @@ lsof -ti:8000 | xargs kill -9
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
 
 【main】f17681831400@gmail.com 
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="/Users/mac/frontend/chrome-debug"
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="/Users/maotouying/frontend/chrome-debug"
 
 另外两个124、176可以用的 
 
 // g17681831402@163.com 没想好
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
 --remote-debugging-port=9223 \
---user-data-dir="/Users/mac/frontend/chrome-debug-9223" \
+--user-data-dir="/Users/maotouying/frontend/chrome-debug-9223" \
 --no-first-run \
 --no-default-browser-check \
 --disable-component-update \
@@ -116,7 +116,7 @@ lsof -ti:8000 | xargs kill -9
 // g17681831401@163.com see
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
 --remote-debugging-port=9224 \
---user-data-dir="/Users/mac/frontend/chrome-debug-9224" \
+--user-data-dir="/Users/maotouying/frontend/chrome-debug-9224" \
 --no-first-run \
 --no-default-browser-check \
 --disable-component-update \
