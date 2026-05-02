@@ -63,7 +63,7 @@ cdp_profiles:
   - id: chrome-debug
     name: Chrome 调试（示例）
     chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    user_data_dir: "/Users/maotouying/frontend/chrome-debug"
+    user_data_dir: "/Users/maotouying/frontend/chrome-debug-9222"
     remote_debugging_port: 9222
     # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
     after_port_kill_killall_chrome: false

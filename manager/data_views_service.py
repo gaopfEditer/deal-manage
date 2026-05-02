@@ -76,7 +76,11 @@ def extract_posts_flat(data: Any) -> list[dict[str, Any]]:
                     continue
                 row = _normalize_signal_fields(post)
                 row["_author_slug"] = str(author_slug)
-                row["_url_key"] = str(url_key)
+                uk = str(url_key).strip()
+                row["_url_key"] = uk
+                # 嵌套 dict 的外层键常为帖子唯一 URL；体内 href 可能缺失或与键不一致
+                if uk.startswith(("http://", "https://")):
+                    row["href"] = uk
                 out.append(row)
         if out:
             return out

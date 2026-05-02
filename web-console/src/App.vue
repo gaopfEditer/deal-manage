@@ -184,7 +184,7 @@
         <div v-if="filteredDataPostsRows.length" class="data-posts-cards">
           <el-card
             v-for="(row, idx) in filteredDataPostsRows"
-            :key="row.id || row.href || `${row.title || 'post'}-${idx}`"
+            :key="getPostRowKey(row, idx)"
             class="data-post-card"
             shadow="hover"
           >
@@ -202,7 +202,13 @@
                   </div>
                 </el-tooltip>
               </div>
-              <el-link v-if="row.href" :href="row.href" target="_blank" type="primary">打开</el-link>
+              <el-link
+                v-if="getPostOpenUrl(row)"
+                type="primary"
+                @click.prevent="openPostInNewTab(row)"
+              >
+                打开
+              </el-link>
             </div>
             <div class="data-post-summary">
               <div class="data-post-signal">
@@ -243,7 +249,7 @@
               <div v-if="getImageUrls(row).length" class="data-post-images">
                 <div
                   v-for="(imgUrl, imgIdx) in getImageUrls(row)"
-                  :key="`${row.href || row.id || idx}-img-${imgIdx}`"
+                  :key="`${getPostRowKey(row, idx)}-img-${imgIdx}`"
                   class="data-post-image-item"
                 >
                   <img
@@ -435,6 +441,52 @@ const currentDataPostsBinanceAuthor = computed({
   },
 });
 
+/** 打开帖子的 URL：优先嵌套 posts 的外层 URL 键，其次帖子自身 href */
+function resolvePostOpenUrl(row) {
+  if (!row) return "";
+  const isHttpUrl = (s) => s.startsWith("http://") || s.startsWith("https://");
+  const candidates = [row._url_key, row.href];
+  for (const v of candidates) {
+    if (v == null) continue;
+    const t = String(v).trim();
+    if (isHttpUrl(t)) return t;
+  }
+  for (const k of ["HREF", "URL", "LINK"]) {
+    const v = row[k];
+    if (v == null) continue;
+    const t = String(v).trim();
+    if (isHttpUrl(t)) return t;
+  }
+  return "";
+}
+
+function normalizePostRow(raw) {
+  const row = raw && typeof raw === "object" ? { ...raw } : {};
+  row._open_url = resolvePostOpenUrl(row);
+  return row;
+}
+
+function getPostOpenUrl(row) {
+  if (!row) return "";
+  const cached = row._open_url == null ? "" : String(row._open_url).trim();
+  if (cached) return cached;
+  return resolvePostOpenUrl(row);
+}
+
+function getPostRowKey(row, idx) {
+  const id = row?.id == null ? "" : String(row.id).trim();
+  const href = getPostOpenUrl(row);
+  const title = row?.title == null ? "" : String(row.title).trim();
+  const author = row?._author_slug == null ? "" : String(row._author_slug).trim();
+  return `${id}|${href}|${title}|${author}|${idx}`;
+}
+
+function openPostInNewTab(row) {
+  const url = getPostOpenUrl(row);
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 const filteredDataPostsRows = computed(() => {
   const rows = Array.isArray(dataPostsRows.value) ? dataPostsRows.value : [];
   const viewId = dataPostsViewId.value;
@@ -468,7 +520,7 @@ const filteredDataPostsRows = computed(() => {
       getSignalContent(row),
       row?.author,
       row?.category,
-      row?.href,
+      getPostOpenUrl(row),
       row?._author_slug,
     ]
       .map((x) => (x == null ? "" : String(x).toLowerCase()))
@@ -772,7 +824,8 @@ async function loadDataPostsPage() {
       dataPostsGroupKeys.value = [];
       return;
     }
-    dataPostsRows.value = data.items || [];
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    dataPostsRows.value = rawItems.map((item) => normalizePostRow(item));
     dataPostsTotal.value = data.total ?? 0;
     dataPostsVersion.value = data.version ?? null;
     dataPostsGeneratedAt.value = data.generated_at || "";

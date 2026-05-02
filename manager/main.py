@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+import json
 import os
 import sys
 from typing import Any
@@ -246,12 +247,21 @@ async def data_view_posts(view_id: str, limit: int = 200, offset: int = 0):
         raise HTTPException(status_code=404, detail=f"data view '{view_id}' not found")
 
     def _run() -> dict[str, Any]:
-        return get_data_view_posts(
+        result = get_data_view_posts(
             found,
             root_dir=ROOT_DIR,
             limit=limit,
             offset=offset,
         )
+        try:
+            print(
+                f"[data_view_posts] view_id={view_id} limit={limit} offset={offset} items=",
+                json.dumps(result.get("items", []), ensure_ascii=False),
+                flush=True,
+            )
+        except Exception:
+            pass
+        return result
 
     try:
         return await asyncio.to_thread(_run)
