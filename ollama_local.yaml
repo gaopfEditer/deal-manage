@@ -1,0 +1,21 @@
+# 本地 Ollama（或兼容 POST /api/generate 的网关）
+# 可通过环境变量 OLLAMA_LOCAL_CONFIG 指向其他 YAML 路径
+base_url: "http://localhost:11434"
+generate_endpoint: "/api/generate"
+# 纯文本默认模型
+default_model: "llama-kline-agent"
+# 带图请求默认模型；不填则使用 default_model
+vision_model: ""
+# 未在请求体中指定 stream 时的默认值
+stream: false
+timeout_seconds: 300
+
+# 使用 JSON/form 的 image_path / image_paths 读本地文件时，解析后的路径必须落在下列目录之一（绝对路径，可含 ~）。
+# 留空或不写则仅允许「本仓库根目录」下的文件。
+# 示例（截图常放在桌面）：
+# allowed_image_path_roots:
+#   - "/Users/maotouying/Desktop"
+#   - "/tmp"
+allowed_image_path_roots:
+  - "/Users/maotouying/Downloads"
+  - "/tmp"

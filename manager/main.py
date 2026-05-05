@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from .scheduler import ScriptScheduler
 from .upstream_proxy import router as upstream_router
+from .local_ollama import router as local_ollama_router
 from .cdp_control import kill_and_start_chrome
 from .data_views_service import (
     DataViewsBrowseStore,
@@ -173,6 +174,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Script Matrix Manager", lifespan=lifespan)
 app.include_router(upstream_router)
+app.include_router(local_ollama_router)
 app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 
