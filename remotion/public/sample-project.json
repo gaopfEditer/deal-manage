@@ -1,0 +1,103 @@
+{
+  "metadata": {
+    "fps": 30,
+    "durationInFrames": 300,
+    "width": 1080,
+    "height": 1920
+  },
+  "assets": {
+    "audio": "http://localhost:8000/tts_output.mp3",
+    "theme": "cyber_wireframe_dark"
+  },
+  "timeline": [
+    {
+      "type": "text_annotation",
+      "startFrame": 0,
+      "endFrame": 60,
+      "props": {
+        "content": "ETH 支撑位分析",
+        "style": { "top": "20%", "left": "10%" },
+        "animation": "slide_in_blur"
+      }
+    },
+    {
+      "type": "ai_assistant_cat",
+      "startFrame": 45,
+      "endFrame": 150,
+      "props": {
+        "action": "pointing",
+        "position": "bottom_right",
+        "dialog": "小墨：此处有强支撑！"
+      }
+    },
+    {
+      "type": "icon_badge",
+      "startFrame": 60,
+      "endFrame": 120,
+      "props": {
+        "icon": "kline_up",
+        "label": "多头发散",
+        "position": "top_right",
+        "size": 100
+      }
+    },
+    {
+      "type": "icon_badge",
+      "startFrame": 90,
+      "endFrame": 150,
+      "props": {
+        "icon": "trend_down",
+        "label": "短线回调",
+        "position": "top_left",
+        "size": 96
+      }
+    },
+    {
+      "type": "echart_panel",
+      "startFrame": 120,
+      "endFrame": 280,
+      "props": {
+        "chart": "line",
+        "trend": "up",
+        "title": "资金费率 / 情绪（示意）",
+        "position": "bottom_center",
+        "containerStyle": { "left": "50%", "transform": "translateX(-50%)", "bottom": "18%", "width": "88%" }
+      }
+    },
+    {
+      "type": "echart_panel",
+      "startFrame": 160,
+      "endFrame": 280,
+      "props": {
+        "chart": "bar",
+        "trend": "down",
+        "title": "成交量结构（示意）",
+        "position": "center",
+        "containerStyle": { "left": "50%", "top": "46%", "transform": "translate(-50%, -50%)", "width": "82%", "height": 300 }
+      }
+    },
+    {
+      "type": "echart_panel",
+      "startFrame": 200,
+      "endFrame": 290,
+      "props": {
+        "chart": "candlestick",
+        "trend": "up",
+        "title": "K 线 + 维加斯通道 + 射击之星",
+        "position": "top_center",
+        "containerStyle": { "top": "12%", "left": "50%", "transform": "translateX(-50%)", "width": "90%", "height": 360 },
+        "vegasChannel": {
+          "enabled": true,
+          "emaPeriod1": 144,
+          "emaPeriod2": 169,
+          "fill": true
+        },
+        "shootingStar": {
+          "indices": [6],
+          "autoDetect": true,
+          "label": "射击之星"
+        }
+      }
+    }
+  ]
+}

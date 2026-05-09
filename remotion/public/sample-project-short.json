@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "fps": 30,
+    "durationInFrames": 120,
+    "width": 1080,
+    "height": 1920
+  },
+  "assets": {},
+  "timeline": [
+    {
+      "type": "text_annotation",
+      "startFrame": 0,
+      "endFrame": 90,
+      "props": {
+        "content": "短版 JSON 工程",
+        "style": { "top": "38%", "left": "50%", "transform": "translateX(-50%)" },
+        "animation": "slide_in_blur"
+      }
+    },
+    {
+      "type": "echart_panel",
+      "startFrame": 30,
+      "endFrame": 110,
+      "props": {
+        "chart": "line",
+        "trend": "down",
+        "title": "快速线形示意",
+        "position": "bottom_center",
+        "containerStyle": {
+          "left": "50%",
+          "transform": "translateX(-50%)",
+          "bottom": "14%",
+          "width": "88%",
+          "height": 280
+        }
+      }
+    }
+  ]
+}
