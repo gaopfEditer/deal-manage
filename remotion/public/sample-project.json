@@ -6,7 +6,6 @@
     "height": 1920
   },
   "assets": {
-    "audio": "http://localhost:8000/tts_output.mp3",
     "theme": "cyber_wireframe_dark"
   },
   "timeline": [

@@ -4,6 +4,7 @@ import { staticFile } from "remotion";
 import { getAudioDurationInSeconds } from "@remotion/media-utils";
 import { Timeline } from "../timeline/Timeline";
 import { assertProjectShape, loadProjectFromUrl } from "../lib/loadProject";
+import { resolveAudioSrc } from "../lib/resolveAudioSrc";
 import type { VideoProject } from "../lib/types";
 
 export type JsonDrivenProps = {
@@ -17,6 +18,7 @@ export type JsonDrivenProps = {
 
 export const calculateJsonDrivenMetadata: CalculateMetadataFunction<JsonDrivenProps> = async ({
   props,
+  compositionId,
 }) => {
   const url = props.projectJsonUrl?.trim() || staticFile("sample-project.json");
   const project = await loadProjectFromUrl(url);
@@ -25,14 +27,17 @@ export const calculateJsonDrivenMetadata: CalculateMetadataFunction<JsonDrivenPr
   const fps = Math.max(1, project.metadata.fps);
   let durationInFrames = Math.max(1, project.metadata.durationInFrames);
 
-  const audio = project.assets?.audio?.trim();
-  if (audio && /^https?:\/\//i.test(audio)) {
-    try {
-      const seconds = await getAudioDurationInSeconds(audio);
-      const fromAudio = Math.ceil(seconds * fps);
-      durationInFrames = Math.max(durationInFrames, fromAudio);
-    } catch {
-      // 渲染前音频不可达时保留 JSON 时长，避免 calculateMetadata 直接失败
+  const audioRaw = project.assets?.audio?.trim();
+  if (audioRaw) {
+    const audioResolved = resolveAudioSrc(audioRaw);
+    if (audioResolved) {
+      try {
+        const seconds = await getAudioDurationInSeconds(audioResolved);
+        const fromAudio = Math.ceil(seconds * fps);
+        durationInFrames = Math.max(durationInFrames, fromAudio);
+      } catch {
+        // 渲染前音频不可达时保留 JSON 时长，避免 calculateMetadata 直接失败
+      }
     }
   }
 
@@ -41,6 +46,9 @@ export const calculateJsonDrivenMetadata: CalculateMetadataFunction<JsonDrivenPr
     fps,
     width: Math.max(2, project.metadata.width),
     height: Math.max(2, project.metadata.height),
+    defaultCodec: "h264",
+    // 不要带 .mp4：Remotion 会按 codec 再追加扩展名，否则会得到 *.mp4.mp4
+    defaultOutName: compositionId,
     props: {
       ...props,
       project,

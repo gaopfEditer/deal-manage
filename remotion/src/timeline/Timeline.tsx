@@ -1,5 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Audio, Sequence } from "remotion";
+import { resolveAudioSrc } from "../lib/resolveAudioSrc";
 import type { VideoProject } from "../lib/types";
 import { TextAnnotation } from "./elements/TextAnnotation";
 import { AiAssistantCat } from "./elements/AiAssistantCat";
@@ -11,11 +12,11 @@ type Props = {
 };
 
 export const Timeline: React.FC<Props> = ({ project }) => {
-  const audio = project.assets?.audio;
+  const audioSrc = resolveAudioSrc(project.assets?.audio);
 
   return (
     <AbsoluteFill style={{ background: "#050814" }}>
-      {audio ? <Audio src={audio} /> : null}
+      {audioSrc ? <Audio src={audioSrc} /> : null}
       {project.timeline.map((layer, idx) => {
         const duration = Math.max(1, layer.endFrame - layer.startFrame);
         return (

@@ -102,6 +102,7 @@ export type VideoProject = {
     height: number;
   };
   assets?: {
+    /** 公网/内网 URL，或相对 `public/` 的文件名（如 `tts_output.mp3`，勿用仅 Studio 可访问的 localhost） */
     audio?: string;
     theme?: string;
   };
