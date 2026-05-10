@@ -252,24 +252,21 @@
                   :key="`${getPostRowKey(row, idx)}-img-${imgIdx}`"
                   class="data-post-image-item"
                 >
-                  <img
-                    class="data-post-thumb"
-                    :src="imgUrl"
-                    :alt="row.title || 'post image'"
-                    loading="lazy"
-                    decoding="async"
-                    referrerpolicy="no-referrer"
-                  />
-                  <div class="data-post-image-popover">
+                  <button
+                    type="button"
+                    class="data-post-thumb-btn"
+                    :title="row.title || '点击查看大图'"
+                    @click="openImagePreview(imgUrl, row.title || 'post image')"
+                  >
                     <img
-                      class="data-post-large"
+                      class="data-post-thumb"
                       :src="imgUrl"
-                      :alt="row.title || 'post image preview'"
+                      :alt="row.title || 'post image'"
                       loading="lazy"
                       decoding="async"
                       referrerpolicy="no-referrer"
                     />
-                  </div>
+                  </button>
                 </div>
               </div>
               <div
@@ -333,7 +330,7 @@
       title="确认并发布到 Memos"
       width="720px"
     >
-      <div style="margin-bottom: 10px; color: #606266; font-size: 13px">
+      <div class="markdown-hint">
         先点击「确认暂存」把当前 Markdown 保存到本地；再点击「发布到 Memos」写入云端。
       </div>
       <el-input
@@ -346,6 +343,43 @@
         <el-button type="primary" @click="confirmDraft">确认暂存</el-button>
         <el-button type="success" @click="publishDraft">发布到 Memos</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="imagePreviewVisible"
+      title="查看大图"
+      width="min(96vw, 1120px)"
+      class="image-preview-dialog"
+      append-to-body
+      destroy-on-close
+      @closed="onImagePreviewClosed"
+    >
+      <div class="image-preview-toolbar">
+        <el-button-group>
+          <el-button size="small" @click="imagePreviewZoomOut">缩小</el-button>
+          <el-button size="small" @click="imagePreviewZoomIn">放大</el-button>
+          <el-button size="small" @click="imagePreviewZoomReset">复位</el-button>
+        </el-button-group>
+        <span class="image-preview-zoom-pct">{{ Math.round(imagePreviewScale * 100) }}%</span>
+        <span class="image-preview-hint">滚轮缩放 · 拖拽平移 · 双击复位</span>
+      </div>
+      <div class="image-preview-stage" @wheel.prevent="onImagePreviewWheel">
+        <div
+          class="image-preview-pan-layer"
+          :class="{ 'is-panning': imagePreviewPanning }"
+          :style="imagePreviewLayerStyle"
+          @mousedown="onImagePreviewMouseDown"
+        >
+          <img
+            class="image-preview-fullimg"
+            :src="imagePreviewUrl"
+            :alt="imagePreviewAlt"
+            draggable="false"
+            referrerpolicy="no-referrer"
+            @dblclick.prevent="imagePreviewZoomReset"
+          />
+        </div>
+      </div>
     </el-dialog>
 
     <div
@@ -390,6 +424,88 @@ const dataPostsStarFilterByView = ref({});
 const dataPostsBinanceAuthorByView = ref({});
 const dataPostsGroupKeys = ref([]);
 const dataPostsKeyword = ref("");
+
+const imagePreviewVisible = ref(false);
+const imagePreviewUrl = ref("");
+const imagePreviewAlt = ref("");
+const imagePreviewScale = ref(1);
+const imagePreviewTx = ref(0);
+const imagePreviewTy = ref(0);
+const imagePreviewPanning = ref(false);
+const imagePreviewPanStart = ref({ x: 0, y: 0, tx: 0, ty: 0 });
+
+const imagePreviewLayerStyle = computed(() => ({
+  transform: `translate(${imagePreviewTx.value}px, ${imagePreviewTy.value}px) scale(${imagePreviewScale.value})`,
+  transformOrigin: "center center",
+}));
+
+function openImagePreview(url, alt) {
+  imagePreviewUrl.value = url;
+  imagePreviewAlt.value = alt || "image";
+  imagePreviewScale.value = 1;
+  imagePreviewTx.value = 0;
+  imagePreviewTy.value = 0;
+  imagePreviewVisible.value = true;
+}
+
+function imagePreviewZoomIn() {
+  imagePreviewScale.value = Math.min(6, Math.round(imagePreviewScale.value * 1.15 * 1000) / 1000);
+}
+
+function imagePreviewZoomOut() {
+  imagePreviewScale.value = Math.max(0.15, Math.round((imagePreviewScale.value / 1.15) * 1000) / 1000);
+}
+
+function imagePreviewZoomReset() {
+  imagePreviewScale.value = 1;
+  imagePreviewTx.value = 0;
+  imagePreviewTy.value = 0;
+}
+
+function onImagePreviewWheel(e) {
+  const factor = e.deltaY > 0 ? 1 / 1.12 : 1.12;
+  let next = imagePreviewScale.value * factor;
+  next = Math.max(0.15, Math.min(6, Math.round(next * 1000) / 1000));
+  imagePreviewScale.value = next;
+}
+
+function detachImagePreviewPanListeners() {
+  imagePreviewPanning.value = false;
+  window.removeEventListener("mousemove", onImagePreviewMouseMove);
+  window.removeEventListener("mouseup", onImagePreviewMouseUp);
+}
+
+function onImagePreviewMouseDown(e) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  imagePreviewPanning.value = true;
+  imagePreviewPanStart.value = {
+    x: e.clientX,
+    y: e.clientY,
+    tx: imagePreviewTx.value,
+    ty: imagePreviewTy.value,
+  };
+  window.addEventListener("mousemove", onImagePreviewMouseMove);
+  window.addEventListener("mouseup", onImagePreviewMouseUp);
+}
+
+function onImagePreviewMouseMove(e) {
+  if (!imagePreviewPanning.value) return;
+  const s = imagePreviewPanStart.value;
+  imagePreviewTx.value = s.tx + (e.clientX - s.x);
+  imagePreviewTy.value = s.ty + (e.clientY - s.y);
+}
+
+function onImagePreviewMouseUp() {
+  detachImagePreviewPanListeners();
+}
+
+function onImagePreviewClosed() {
+  detachImagePreviewPanListeners();
+  imagePreviewZoomReset();
+  imagePreviewUrl.value = "";
+  imagePreviewAlt.value = "";
+}
 
 const dataPostsPlatformLabelsText = computed(() => {
   const pl = dataPostsPlatformLabels.value;
@@ -1053,6 +1169,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  detachImagePreviewPanListeners();
   if (pollTimer) clearInterval(pollTimer);
   if (eventSource.value) {
     eventSource.value.close();
@@ -1067,6 +1184,10 @@ onUnmounted(() => {
 <style scoped>
 .page {
   padding: 20px;
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
 }
 .header {
   display: flex;
@@ -1087,11 +1208,11 @@ onUnmounted(() => {
   word-break: break-all;
 }
 .data-view-error {
-  color: #f56c6c;
+  color: var(--el-color-danger);
 }
 .data-posts-meta {
   margin-bottom: 10px;
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1108,7 +1229,7 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 .data-posts-filter-count {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
 }
 .data-posts-cards {
@@ -1136,7 +1257,7 @@ onUnmounted(() => {
 .data-post-title {
   font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: var(--el-text-color-primary);
   line-height: 1.45;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1147,7 +1268,7 @@ onUnmounted(() => {
   cursor: default;
 }
 .data-post-summary {
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-size: 13px;
   line-height: 1.7;
   margin-bottom: 8px;
@@ -1161,15 +1282,15 @@ onUnmounted(() => {
   margin-bottom: 6px;
 }
 .data-post-signal-label {
-  color: #909399;
+  color: var(--el-text-color-secondary);
 }
 .data-post-signal-stars {
-  color: #e6a23c;
+  color: var(--el-color-warning);
   letter-spacing: 1px;
   font-weight: 600;
 }
 .data-post-signal-score {
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-size: 12px;
 }
 .data-post-signal-content-wrap {
@@ -1177,7 +1298,7 @@ onUnmounted(() => {
   min-width: 0;
 }
 .data-post-signal-content {
-  color: #303133;
+  color: var(--el-text-color-primary);
   margin-bottom: 6px;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1197,54 +1318,109 @@ onUnmounted(() => {
 .data-post-image-item {
   position: relative;
 }
+.data-post-thumb-btn {
+  position: relative;
+  display: block;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  cursor: zoom-in;
+  background: transparent;
+  line-height: 0;
+}
+.data-post-thumb-btn:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+}
 .data-post-thumb {
   width: 88px;
   height: 88px;
   object-fit: cover;
   border-radius: 8px;
-  border: 1px solid #ebeef5;
-  cursor: zoom-in;
-  background: #f5f7fa;
+  border: 1px solid var(--el-border-color);
+  display: block;
+  background: var(--el-fill-color-dark);
+  vertical-align: top;
 }
-.data-post-image-popover {
-  display: none;
+.data-post-thumb-hint {
   position: absolute;
   left: 0;
-  top: 94px;
-  z-index: 10;
-  padding: 6px;
-  border-radius: 10px;
-  background: #fff;
-  border: 1px solid #dcdfe6;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+  right: 0;
+  bottom: 0;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: #fff;
+  text-align: center;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
+  border-radius: 0 0 7px 7px;
+  pointer-events: none;
 }
-.data-post-image-item:hover .data-post-image-popover {
-  display: block;
+.image-preview-dialog :deep(.el-dialog__body) {
+  padding-top: 6px;
 }
-.data-post-large {
-  display: block;
-  width: min(420px, 65vw);
-  max-height: 420px;
-  object-fit: contain;
+.image-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 10px;
+}
+.image-preview-zoom-pct {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  min-width: 3.5em;
+}
+.image-preview-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  flex: 1;
+  min-width: 200px;
+}
+.image-preview-stage {
+  height: min(72vh, 760px);
+  overflow: hidden;
+  background: var(--el-fill-color-dark);
   border-radius: 8px;
-  background: #f5f7fa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+.image-preview-pan-layer {
+  cursor: grab;
+  will-change: transform;
+}
+.image-preview-pan-layer.is-panning {
+  cursor: grabbing;
+}
+.image-preview-fullimg {
+  max-width: min(90vw, 1040px);
+  max-height: min(68vh, 720px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  border-radius: 4px;
+  box-shadow: var(--el-box-shadow-light);
 }
 .data-post-video {
   margin-top: 10px;
   padding: 8px;
-  border: 1px dashed #dcdfe6;
+  border: 1px dashed var(--el-border-color);
   border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 10px;
   cursor: context-menu;
-  background: #fafafa;
+  background: var(--el-fill-color-light);
 }
 .data-post-video-thumb {
   width: 88px;
   height: 60px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  background: linear-gradient(135deg, var(--el-color-primary) 0%, var(--el-color-primary-light-3) 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1259,12 +1435,12 @@ onUnmounted(() => {
   flex: 1;
 }
 .data-post-video-title {
-  color: #303133;
+  color: var(--el-text-color-primary);
   font-weight: 600;
   margin-bottom: 2px;
 }
 .data-post-video-url {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
   word-break: break-all;
 }
@@ -1272,10 +1448,10 @@ onUnmounted(() => {
   position: fixed;
   z-index: 3000;
   min-width: 150px;
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  background: var(--el-bg-color-overlay);
+  box-shadow: var(--el-box-shadow-dark);
   padding: 6px;
 }
 .video-menu-item {
@@ -1286,13 +1462,13 @@ onUnmounted(() => {
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
-  color: #303133;
+  color: var(--el-text-color-primary);
 }
 .video-menu-item:hover {
-  background: #f5f7fa;
+  background: var(--el-fill-color-light);
 }
 .data-post-foot {
-  color: #909399;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
   display: flex;
   flex-wrap: wrap;
@@ -1322,9 +1498,10 @@ onUnmounted(() => {
   gap: 8px;
   font-size: 20px;
   font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 .meta {
-  color: #606266;
+  color: var(--el-text-color-regular);
   font-size: 13px;
   margin-top: 8px;
 }
@@ -1359,14 +1536,25 @@ onUnmounted(() => {
 </style>
 
 <style>
+html.dark {
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
-  background: #f5f7fa;
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
   font-family:
     Inter,
     "PingFang SC",
     "Microsoft YaHei",
     sans-serif;
+}
+
+.markdown-hint {
+  margin-bottom: 10px;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
 }
 
 /* 帖子弹窗 teleport 到 body，需非 scoped；整体缩小 20% 以同屏展示更多 */

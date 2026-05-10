@@ -30,7 +30,17 @@ DATA_VIEWS_BROWSE_PATH = ROOT_DIR / "manager" / "state" / "data_views_browse.jso
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 # 根据运行环境选择不同配置：优先显式 RUN_ENV，其次按平台推断。
-_RUN_ENV = os.getenv("RUN_ENV", "").strip().lower()
+_run_env_raw = os.getenv("RUN_ENV", "").strip().lower()
+# confi-win.yaml 使用 D:\... 等盘符路径；在 macOS/Linux 上 pathlib 不将其视为绝对路径，
+# 若仍加载该文件，scheduler 会把 script_path 与仓库根目录错误拼接成 .../deal-manage/D:\...
+if _run_env_raw == "win" and os.name != "nt":
+    print(
+        "[deal-manage] 提示: RUN_ENV=win 在非 Windows 平台已忽略，按默认规则选择配置文件。",
+        file=sys.stderr,
+    )
+    _RUN_ENV = ""
+else:
+    _RUN_ENV = _run_env_raw
 if _RUN_ENV == "mac":
     CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
 elif _RUN_ENV == "win":

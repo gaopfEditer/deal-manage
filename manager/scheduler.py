@@ -581,6 +581,11 @@ class ScriptScheduler:
             encoding="utf-8",
         )
 
+    @staticmethod
+    def _is_windows_drive_path(raw: str) -> bool:
+        s = str(raw).strip()
+        return len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "\\/"
+
     def _resolve_data_view_for_script(self, script_cfg: dict[str, Any]) -> dict[str, Any] | None:
         views = list(self.config.get("data_views") or [])
         if not views:
@@ -592,6 +597,8 @@ class ScriptScheduler:
                 continue
             p = Path(raw).expanduser()
             if not p.is_absolute():
+                if os.name != "nt" and self._is_windows_drive_path(raw):
+                    continue
                 p = (self.root_dir / p).resolve()
             else:
                 p = p.resolve()
@@ -674,6 +681,11 @@ class ScriptScheduler:
         path_raw = str(view.get("path") or "").strip()
         data_path = Path(path_raw).expanduser()
         if not data_path.is_absolute():
+            if os.name != "nt" and self._is_windows_drive_path(path_raw):
+                await runtime.log_queue.put(
+                    f"[{self._now()}] Telegram notify skipped: data_view path is Windows-style on non-Windows: {path_raw!r}."
+                )
+                return
             data_path = (self.root_dir / data_path).resolve()
         await runtime.log_queue.put(
             f"[{self._now()}] Telegram notify: reading posts file {data_path}."
@@ -816,8 +828,15 @@ class ScriptScheduler:
         return memo
 
     def _resolve_project_dir(self, script_path_raw: str) -> Path:
-        base = Path(script_path_raw)
+        raw = str(script_path_raw).strip()
+        base = Path(raw)
         if not base.is_absolute():
+            if os.name != "nt" and self._is_windows_drive_path(raw):
+                raise FileNotFoundError(
+                    "script_path 为 Windows 盘符路径 "
+                    f"{raw!r}，但当前运行在非 Windows 系统，不能与仓库根目录拼接。"
+                    "请改为本机 Unix 绝对路径，并确认未误设 RUN_ENV=win（否则会加载 confi-win.yaml）。"
+                )
             base = self.root_dir / base
         if base.is_dir():
             return base
@@ -922,8 +941,15 @@ class ScriptScheduler:
             return cmd, run_cwd
 
         # 兼容旧配置：script_path 直接写脚本文件路径
-        script_path = Path(script_path_raw)
+        spr = str(script_path_raw).strip()
+        script_path = Path(spr)
         if not script_path.is_absolute():
+            if os.name != "nt" and self._is_windows_drive_path(spr):
+                raise FileNotFoundError(
+                    "script_path 为 Windows 盘符路径 "
+                    f"{spr!r}，但当前运行在非 Windows 系统，不能与仓库根目录拼接。"
+                    "请改为本机 Unix 绝对路径，并确认未误设 RUN_ENV=win。"
+                )
             script_path = self.root_dir / script_path
         cmd = [python_executable, str(script_path)]
         if bool(script_cfg.get("pass_action", True)):
