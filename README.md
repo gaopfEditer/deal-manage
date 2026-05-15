@@ -1,138 +1,92 @@
 # deal-manage
 
-脚本执行和结果可视化系统（FastAPI + Vue3 + Element Plus）。
+面向运营与自动化脚本的 **任务调度 + Web 控制台 + 数据视图 + 可选视频导出** 的一体化仓库：用 YAML 声明多项目下的 Python 任务，由后端拉起子进程、写日志、按计划执行，前端负责监控与触发辅助流程。
 
-## 目录结构
+---
 
-- `manager/main.py`: FastAPI 入口，提供调度 API 和日志流 API，并托管静态页面
-- `manager/scheduler.py`: 核心调度逻辑，负责 subprocess 执行和状态维护
-- `manager/web/`: **Vite 构建产物**（`npm run build` 输出到此目录，由 FastAPI 托管）
-- `web-console/`: **Vue 3 + Vite + Element Plus** 源码（开发时 `npm run dev`，接口通过 Vite 代理到后端）
-- `config.yaml`: 支持项目级配置（一个项目下多个脚本任务）
-- `scripts/*.py`: 示例脚本（便于本地联调）
+## 主要功能
 
-## 后端依赖
+### 1. 脚本任务调度（核心）
+
+- 通过 **`config.yaml`**（或 `RUN_ENV` 对应的 `config-mac.yaml` / `confi-win.yaml`）配置 **项目 → 多条脚本**，每条包含启动命令、工作目录、虚拟环境、定时策略（间隔 / 单次等）。
+- **`manager/scheduler.py`** 维护任务状态（运行中 / 成功 / 失败），支持 **启动、停止、手动再跑**，日志通过队列供前端 **SSE 流式** 查看。
+- 支持 **`python run.py`** 一键拉起后端（`uvicorn`）与前端开发服务（`pnpm`/`npm dev`），并可选首次引导抓取；详见文末「快速启动」。
+
+### 2. Web 控制台（Vue 3 + Element Plus）
+
+- 源码在 **`web-console/`**，构建产物可输出到 **`manager/web/`**，由 FastAPI 托管静态资源。
+- 任务卡片展示状态与日志；与 **CDP（Chrome 远程调试）**、**数据视图**、**Telegram 通知** 等能力在界面上联动（具体以 `App.vue` 与后端 API 为准）。
+
+### 3. CDP / Chrome 远程调试
+
+- 对标记需要 CDP 的脚本，可在启动前检测调试端口或调用 **`manager/cdp_control.py`** 等逻辑，便于依赖 **已登录浏览器会话** 的抓取类脚本（与 `run.py` 中的 CDP 说明一致）。
+
+### 4. 数据视图（Data views）
+
+- 配置中的 **`data_views`** 与脚本产出数据关联，用于在控制台中 **浏览、统计** 抓取结果（实现见 **`manager/data_views_service.py`** 及相关 API）。
+
+### 5. Telegram 推送（非群监控）
+
+- 任务完成后可按脚本配置 **`send_to_telegram`**、**`telegram_token`**、**`telegram_chat_id`** 向指定会话 **发送消息**（`sendMessage`）。
+- **不包含** 监听 Telegram 群消息、Webhook 收消息等入站逻辑。
+
+### 6. 内置 AI HTTP 接口（非简单转发网关形态）
+
+- **`manager/main.py`** 挂载路由：例如 **Gemini**（`/gemini/chat`、`/gemini/image`）、**通义千问**（`/qwen/chat`）等；密钥通过 **`.env`** 注入（可参考仓库内 **`.env.example`**）。
+
+### 7. Remotion：JSON 驱动短视频（子项目）
+
+- 目录 **`remotion/`**：根据 **`public/*.json`** 工程描述（时间轴、图表层、文案等）生成 **竖屏类演示视频**，支持多 Composition 注册（见 **`remotion/src/projectRegistry.ts`**）。
+- 与主系统的调度无强制绑定，可作为 **独立 `pnpm dev` / `pnpm render`** 的可视化导出工具使用。
+
+### 8. 其他后端能力
+
+- **上游代理 / 本地 Ollama** 等路由分模块挂载（`upstream_proxy`、`local_ollama`），便于扩展本地模型或统一出口。
+
+---
+
+## 技术栈概览
+
+| 层级 | 技术 |
+|------|------|
+| 后端 | Python 3、FastAPI、Uvicorn、PyYAML、HTTPX |
+| 前端 | Vue 3、Vite、Element Plus |
+| 视频 | Remotion 4.x（React） |
+
+依赖列表见 **`requirements.txt`**；前端依赖见 **`web-console/package.json`**、**`remotion/package.json`**。
+
+---
+
+## 快速启动与详细文档
 
 ```bash
 pip install -r requirements.txt
-```
-
-### AI 接口（本仓库内实现，非转发）
-
-直接调用 **Google Gemini**（Generative Language API）与 **通义千问**（DashScope OpenAI 兼容接口）。路径约定与常见网关类似：
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/gemini/chat` | JSON：`role`、`message`；或 `multipart`：`role`、`message`、`files` |
-| POST | `/gemini/image` | JSON：`prompt`，可选 `aspectRatio`、`referenceImages`（base64） |
-| POST | `/qwen/chat` | JSON：`messages`、`model`、`stream` |
-
-环境变量请参考项目根目录 **`.env.example`**，复制为 `.env` 后按需填写（可用 `python-dotenv` 或系统环境变量注入）。
-
-## 前端（Vue 3 + Element Plus）
-
-```bash
-cd web-console
-npm install
-npm run build
-```
-
-开发时前后端分离：先启动 `uvicorn`，再在 `web-console` 下执行 `npm run dev`，页面走 Vite（`/api` 会代理到 `http://127.0.0.1:8000`）。
-
-## 启动
-
-```bash
-source .venv/bin/activate
-lsof -ti:8000 | xargs kill -9
-uvicorn manager.main:app --reload
-```
-
-若已执行过 `npm run build`，访问 [http://127.0.0.1:8000/](http://127.0.0.1:8000/) 即为打包后的控制台。
-
-## 配置示例（推荐）
-
-```yaml
-projects:
-  - id: auto-deal-eth
-    name: Auto Deal ETH
-    script_path: 'D:\frontend\main\python\auto-deal-eth'
-    venv_path: ".venv"
-    scripts:
-      - id: run-calendar
-        run: "python -m getinfo.run_calendar"
-        schedule:
-          mode: interval
-          seconds: 60
-      - id: run-1
-        run: "python -m getinfo.run_1"
-        schedule:
-          mode: once
-          enabled: false
-```
-
-系统会自动将项目下每个 `scripts` 条目展开成一个独立任务卡片（ID 形如 `auto-deal-eth-run-calendar`）。
-
-
-
-**以远程调试模式启动Chrome**：
-
-**Windows:**
-```powershell
-& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222  --user-data-dir="D:\chrome_debug_profile"
-```
-
-**Mac:**
-```bash
-
-lsof -ti:8000 | xargs kill -9
-
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-
-【main】f17681831400@gmail.com 
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="/Users/maotouying/frontend/chrome-debug"
-
-另外两个124、176可以用的 
-
-// g17681831401@163.com pl1086 海外技术 1245@qq.com1
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
---remote-debugging-port=9223 \
---user-data-dir="/Users/maotouying/frontend/chrome-debug-9223" \
---no-first-run \
---no-default-browser-check \
---disable-component-update \
---disable-sync \
---disable-extensions \
---disable-background-networking \
---disable-background-timer-throttling \
---disable-client-side-phishing-detection \
---disable-default-apps \
---disable-gpu-shader-disk-cache \
---disable-software-rasterizer \
---disk-cache-size=10485760 \
---media-cache-size=10485760 \
---password-store=basic
-
-// g17681831402@163.com gpg1086 
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
---remote-debugging-port=9224 \
---user-data-dir="/Users/maotouying/frontend/chrome-debug-9224" \
---no-first-run \
---no-default-browser-check \
---disable-component-update \
---disable-sync \
---disable-extensions \
---disable-background-networking \
---disable-background-timer-throttling \
---disable-client-side-phishing-detection \
---disable-default-apps \
---disable-gpu-shader-disk-cache \
---disable-software-rasterizer \
---disk-cache-size=10485760 \
---media-cache-size=10485760 \
---password-store=basic
-```
-
-// 自动启动前后端，和默认启动一次抓取
 python run.py
-python run.py --no-bootstrap
+```
+
+更完整的目录说明、环境变量、前后端分离开发方式、Chrome 调试参数示例等，见 **`USGE.md`**（文件名保持仓库现状）。
+
+---
+
+## 配置与安全建议
+
+- **勿将 Bot Token、API Key 等密钥提交到 Git**。请使用 **`.env`** 或未跟踪的本地配置，并在泄露后 **轮换** Token。
+- 多机或多 OS 时可用环境变量 **`RUN_ENV`**（如 `mac` / `win`）指向不同 YAML；逻辑见 **`manager/main.py`** 顶部配置选择。
+
+---
+
+## 仓库结构（精简）
+
+```
+deal-manage/
+├── manager/           # FastAPI 应用、调度器、静态托管、数据视图等
+├── web-console/       # 控制台前端源码
+├── remotion/          # JSON 驱动 Remotion 工程（可选）
+├── run.py             # 本地一键启动脚本
+├── config.yaml        # 主配置示例（项目 + 脚本 + data_views 等）
+├── requirements.txt
+├── USGE.md            # 使用说明（详细）
+└── README.md          # 本文件
+```
+
+如有新同事接入，优先阅读 **本 README 了解能力边界**，再按 **USGE.md** 搭环境。
