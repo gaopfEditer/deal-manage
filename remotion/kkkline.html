@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ECharts 高级量化 K 线图</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #0f141c;
+      }
+      #chart-container {
+        width: 100%;
+        height: 100vh;
+        max-width: 600px;
+        margin: 0 auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="chart-container"></div>
+
+    <script type="text/javascript">
+      const chartDom = document.getElementById("chart-container");
+      const myChart = echarts.init(chartDom, "dark"); // 使用暗黑主题
+
+      // --- 1. 模拟完整的量化时间序列数据 ---
+      // 格式：[ 时间戳, 开盘, 收盘, 最低, 最高, 成交量, Vegas144, Vegas169, 信号文本, 信号颜色, 信号方向(up/down) ]
+      const rawData =[
+    // --- 箱体前置：小幅阴跌探底 ---
+    ["05-14 04:00", 2150, 2135, 2125, 2160, 1450, 2145, 2140, "1H ↓", "#22c55e", "down"],
+    ["05-14 08:00", 2135, 2118, 2110, 2142, 1850, 2143, 2139, "连续下插针", "#9333ea", "down"],
+    ["05-14 12:00", 2118, 2130, 2112, 2135, 1200, 2141, 2138, "看涨背离", "#0284c7", "down"],
+    
+    // --- 进入标准的横盘箱体区间（上限 ~2155，下限 ~2115，Vegas 隧道在 2135 附近横盘走平） ---
+    // 触及箱体上沿，多头受阻
+    ["05-14 16:00", 2130, 2150, 2128, 2155, 950,  2139, 2137, "1H ↑", "#ef4444", "up"],
+    ["05-14 20:00", 2150, 2145, 2138, 2154, 710,  2138, 2137, "射击之星", "#eab308", "up"],
+    ["05-15 00:00", 2145, 2125, 2122, 2148, 820,  2137, 2136, "V看跌吞没", "#ef4444", "up"],
+    
+    // 触及箱体下沿，空头力竭
+    ["05-15 04:00", 2125, 2120, 2115, 2130, 650,  2136, 2136, "倒锤子", "#0284c7", "down"],
+    ["05-15 08:00", 2120, 2132, 2118, 2135, 510,  2136, 2136, "看涨背离", "#0284c7", "down"],
+    
+    // 回到隧道中轴缠绕，极度缩量
+    ["05-15 12:00", 2132, 2136, 2128, 2140, 380,  2135, 2135, null, null, null],
+    ["05-15 16:00", 2136, 2131, 2127, 2138, 310,  2135, 2135, null, null, null],
+    
+    // 再次试探箱体上沿
+    ["05-15 20:00", 2131, 2152, 2130, 2155, 880,  2135, 2135, "连续上插针", "#f43f5e", "up"],
+    ["05-16 00:00", 2152, 2142, 2140, 2156, 760,  2136, 2135, "V看跌吞没", "#ef4444", "up"],
+    ["05-16 04:00", 2142, 2128, 2125, 2145, 690,  2136, 2136, "1H ↓", "#22c55e", "down"],
+    
+    // 再次试探箱体下沿
+    ["05-16 08:00", 2128, 2116, 2114, 2132, 920,  2136, 2136, "连续下插针", "#9333ea", "down"],
+    ["05-16 12:00", 2116, 2126, 2115, 2130, 580,  2135, 2136, "倒锤子", "#0284c7", "down"],
+    
+    // 中轴混沌震荡，指标频繁钝化
+    ["05-16 16:00", 2126, 2138, 2124, 2142, 420,  2135, 2136, "1H ↑", "#ef4444", "up"],
+    ["05-17 00:00", 2138, 2134, 2130, 2140, 350,  2135, 2136, "射击之星", "#eab308", "up"],
+    ["05-17 08:00", 2134, 2144, 2132, 2146, 520,  2136, 2136, null, null, null],
+    
+    // 箱体尾声：波动率压制到极限，等待突破
+    ["05-17 16:00", 2144, 2122, 2118, 2145, 1100, 2136, 2136, "V看跌吞没", "#ef4444", "up"],
+    ["05-18 00:00", 2122, 2126, 2116, 2132, 750,  2135, 2136, "看涨背离", "#0284c7", "down"],
+    ["05-18 04:00", 2126, 2135, 2124, 2138, 620,  2135, 2136, null, null, null],
+    ["05-18 08:00", 2135, 2132, 2128, 2142, 490,  2136, 2136, "V倒锤子", "#a855f7", "down"]
+];
+
+      // --- 2. 提取各图层独立的数据数组 ---
+      const dates = rawData.map((item) => item[0]);
+      const kData = rawData.map((item) => [item[1], item[2], item[3], item[4]]); // [Open, Close, Low, High]
+      const vData = rawData.map((item) => item[5]);
+      const vegas144 = rawData.map((item) => item[6]);
+      const vegas169 = rawData.map((item) => item[7]);
+
+      // --- 3. 核心：动态生成交错排版的信号标记数据 (MarkPoint) ---
+      const markPointData = [];
+      rawData.forEach((item, index) => {
+        if (item[8]) {
+          // 如果当前帧有信号
+          const isUpDirection = item[10] === "up";
+          // 巧妙计算基准价格：看涨信号挂在最低价下方，看跌信号挂在最高价上方，防止遮挡K线主体
+          const basePrice = isUpDirection ? item[4] : item[3];
+          // 动态计算垂直偏移量：通过正负号控制气泡朝上弹还是朝下弹
+          const offsetY = isUpDirection ? -22 : 22;
+
+          markPointData.push({
+            name: item[8],
+            coord: [item[0], basePrice],
+            itemStyle: { color: item[9] },
+            // 使用内置的 'pin' 气泡形状
+            symbol: "pin",
+            // 根据方向旋转气泡，使其尖端精准指向K线高低点
+            symbolRotate: isUpDirection ? 180 : 0,
+            symbolSize: [55, 28],
+            symbolOffset: [0, offsetY],
+            label: {
+              show: true,
+              formatter: item[8],
+              fontSize: 9,
+              color: "#fff",
+              fontWeight: "bold",
+              // 修正因为气泡旋转导致的文字倒置问题
+              rotate: isUpDirection ? 180 : 0,
+              offset: isUpDirection ? [0, 2] : [0, -2],
+            },
+          });
+        }
+      });
+      markPointData.push({
+        name: "最新价格指示",
+        // 绑定最后一根 K 线的时间戳，以及它的最高价位置（从上方往下指）
+        coord: [rawData[rawData.length - 1][0], rawData[rawData.length - 1][4]],
+        // 使用标准的下箭头 SVG 路径（也可以直接使用内置的 'arrow' 并旋转）
+        symbol: "path://M12 2v20m0 0l-8-8m8 8l8-8",
+        symbolSize: [20, 30], // 箭头的[宽, 高]，可以调得更粗大显眼
+        symbolOffset: [0, "-50%"], // 向上偏移，使其悬浮在K线上方
+        itemStyle: {
+          color: "#ef4444", // 纯正红色箭头
+          shadowBlur: 10, // 选配：给箭头加点红色霓虹发光动效
+          shadowColor: "#ef4444",
+        },
+        label: { show: false }, // 纯箭头，不需要文字遮挡
+      });
+
+      // --- 4. ECharts 配置选项 ---
+      const option = {
+        backgroundColor: "#0f141c",
+        // 关闭所有初始动画，完美适配 Remotion 逐帧渲染或分片控制
+        animation: false,
+
+        // 垂直双网格布局：上方 K 线占 70% 空间，下方成交量占 15% 空间
+        grid: [
+          {
+            id: "klineGrid",
+            left: "5%",
+            right: "16%",
+            top: "6%",
+            height: "68%",
+          },
+          {
+            id: "volumeGrid",
+            left: "5%",
+            right: "16%",
+            top: "78%",
+            height: "14%",
+          },
+        ],
+
+        xAxis: [
+          {
+            type: "category",
+            data: dates,
+            gridIndex: 0,
+            scale: true,
+            boundaryGap: true,
+            axisLine: { lineStyle: { color: "#262f3d" } },
+            axisLabel: { color: "#848e9c", fontSize: 10 },
+          },
+          {
+            type: "category",
+            data: dates,
+            gridIndex: 1,
+            scale: true,
+            boundaryGap: true,
+            show: false, // 隐藏底网格的X轴，保持视觉整洁
+          },
+        ],
+
+        yAxis: [
+          {
+            type: "value",
+            gridIndex: 0,
+            scale: true,
+            position: "right", // Y轴靠右显示，符合主流交易所习惯
+            splitLine: { lineStyle: { color: "#1e2530" } },
+            axisLine: { lineStyle: { color: "#262f3d" } },
+            axisLabel: { color: "#cbcfd5", fontSize: 10 },
+          },
+          {
+            type: "value",
+            gridIndex: 1,
+            scale: true,
+            show: false, // 隐藏成交量的 Y 轴刻度
+          },
+        ],
+
+        // 联动无感缩放
+        dataZoom: [{ type: "inside", xAxisIndex: [0, 1], start: 0, end: 100 }],
+
+        series: [
+          // 图层 1: K 线主体
+          {
+            name: "Ethereum",
+            type: "candlestick",
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: kData,
+            itemStyle: {
+              color: "#00b06b", // 阳线填充（绿）
+              color0: "#ff4d4f", // 阴线填充（红）
+              borderColor: "#00b06b",
+              borderColor0: "#ff4d4f",
+            },
+            // 注入洗好的量化信号气泡数组
+            markPoint: {
+              data: markPointData,
+            },
+          },
+          // 图层 2: Vegas 隧道线 144
+          {
+            name: "Vegas 144",
+            type: "line",
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: vegas144,
+            showSymbol: false,
+            smooth: true,
+            lineStyle: { color: "#ef4444", width: 1.5 }, // 红色通道
+          },
+          // 图层 3: Vegas 隧道线 169
+          {
+            name: "Vegas 169",
+            type: "line",
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: vegas169,
+            showSymbol: false,
+            smooth: true,
+            lineStyle: { color: "#b91c1c", width: 1.5 }, // 深红伴随线
+          },
+          // 图层 4: 底部成交量柱状图
+          {
+            name: "Volume",
+            type: "bar",
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: vData.map((vol, idx) => {
+              // 逻辑插值：根据当前 K 线的涨跌动态赋予成交量柱体颜色
+              const isUp = kData[idx][1] >= kData[idx][0];
+              return {
+                value: vol,
+                itemStyle: {
+                  color: isUp ? "rgba(0,176,107,0.3)" : "rgba(255,77,79,0.3)",
+                },
+              };
+            }),
+          },
+        ],
+      };
+
+      // 使用配置项渲染图表
+      myChart.setOption(option);
+
+      // 响应式自适应支持
+      window.addEventListener("resize", function () {
+        myChart.resize();
+      });
+    </script>
+  </body>
+</html>

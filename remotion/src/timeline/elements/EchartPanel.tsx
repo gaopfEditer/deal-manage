@@ -14,6 +14,8 @@ import {
   computeEma,
   detectShootingStarIndices,
 } from "./echartKlineHelpers";
+import { buildTradingViewPresetFromData } from "./echartEthKlinePreset";
+import { buildTradingViewCandlestickOption } from "./echartTradingViewOption";
 
 type Props = {
   layer: EchartPanelLayer;
@@ -56,9 +58,31 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
   const ref = useRef<HTMLDivElement>(null);
   const inst = useRef<echarts.ECharts | null>(null);
 
-  const { chart, trend, title, position, containerStyle, vegasChannel, shootingStar } =
-    layer.props;
+  const {
+    chart,
+    trend,
+    title,
+    position,
+    containerStyle,
+    vegasChannel,
+    shootingStar,
+    tradingViewStyle,
+    fullscreen,
+    tradingViewData,
+    callouts,
+  } = layer.props;
+  const isTradingView =
+    chart === "candlestick" &&
+    tradingViewStyle === true &&
+    Boolean(tradingViewData);
   const pos = resolveSemanticPosition(typeof position === "string" ? position : undefined);
+  const tvPreset = useMemo(
+    () =>
+      isTradingView && tradingViewData
+        ? buildTradingViewPresetFromData(tradingViewData)
+        : null,
+    [isTradingView, tradingViewData]
+  );
 
   const outerStyle: React.CSSProperties = {};
   if (containerStyle && typeof containerStyle === "object") {
@@ -71,10 +95,23 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const totalPoints = chart === "candlestick" ? 28 : 14;
+  const totalPoints =
+    isTradingView && tvPreset ? tvPreset.ohlc.length : chart === "candlestick" ? 28 : 14;
   const visible = Math.max(2, Math.ceil(totalPoints * progress));
 
   const { option } = useMemo(() => {
+    if (isTradingView && tvPreset) {
+      return {
+        option: buildTradingViewCandlestickOption({
+          preset: tvPreset,
+          visible,
+          vegasChannel,
+          shootingStar,
+          extraCallouts: callouts,
+        }),
+      };
+    }
+
     const { categories, values, ohlc } = buildSeriesData(chart, trend, totalPoints);
     const up = trend === "up";
     const lineColor = up ? "#4ade80" : "#fb7185";
@@ -273,7 +310,18 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
         ],
       },
     };
-  }, [chart, trend, title, visible, vegasChannel, shootingStar]);
+  }, [
+    chart,
+    trend,
+    title,
+    visible,
+    vegasChannel,
+    shootingStar,
+    isTradingView,
+    tvPreset,
+    callouts,
+    totalPoints,
+  ]);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -297,6 +345,50 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  if (isTradingView && tvPreset && (fullscreen || tradingViewStyle)) {
+    const changeColor = tvPreset.change < 0 ? "#ef5350" : "#26a69a";
+    const changeSign = tvPreset.change >= 0 ? "+" : "";
+    return (
+      <AbsoluteFill
+        style={{
+          pointerEvents: "none",
+          background: "#0f141c",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            flexShrink: 0,
+            padding: "28px 24px 12px",
+            borderBottom: "1px solid #2a2e39",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 34, fontWeight: 700, color: "#d1d4dc" }}>
+              {tvPreset.symbol}
+            </span>
+            <span style={{ fontSize: 22, color: "#787b86" }}>{tvPreset.timeframe}</span>
+          </div>
+          <div style={{ marginTop: 10, display: "flex", alignItems: "baseline", gap: 16 }}>
+            <span style={{ fontSize: 48, fontWeight: 700, color: "#26a69a" }}>
+              {tvPreset.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            </span>
+            <span style={{ fontSize: 26, color: changeColor, fontWeight: 600 }}>
+              {changeSign}
+              {tvPreset.change.toFixed(2)} ({changeSign}
+              {tvPreset.changePercent.toFixed(2)}%)
+            </span>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 20, color: "#787b86" }}>
+            {title || tvPreset.vegasLegend}
+          </div>
+        </div>
+        <div ref={ref} style={{ flex: 1, width: "100%", minHeight: 0 }} />
+      </AbsoluteFill>
+    );
+  }
 
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>

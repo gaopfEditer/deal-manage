@@ -21,11 +21,39 @@ export type TextAnnotationLayer = TimelineLayerBase & {
   };
 };
 
+export type ChatParticipant = {
+  /** 唯一 id，与 messages[].from 对应 */
+  id: string;
+  nickname: string;
+  /** emoji、公网 URL，或相对 public/ 的路径 */
+  avatar?: string;
+};
+
+export type ChatMessageKind = "text" | "image" | "red_packet" | "emoji";
+
+export type ChatMessage = {
+  from: string;
+  kind?: ChatMessageKind;
+  content: string;
+  /** 气泡旁时间文案，可空 */
+  time?: string;
+  /** 距上一条出现后的等待毫秒，默认 1000 */
+  delayMs?: number;
+};
+
 export type AiAssistantCatLayer = TimelineLayerBase & {
   type: "ai_assistant_cat";
   props: {
-    action?: string;
+    /** 己方 id，气泡在右侧；未设时取 participants[0] */
+    selfId?: string;
+    participants: ChatParticipant[];
+    messages: ChatMessage[];
+    defaultDelayMs?: number;
+    /** 聊天面板标题，可空 */
+    title?: string;
     position?: SemanticPosition | string;
+    /** @deprecated 旧版单句；无 messages 时自动转成一条对话 */
+    action?: string;
     dialog?: string;
   };
 };
@@ -74,6 +102,63 @@ export type ShootingStarProps = {
   label?: string;
 };
 
+/** K 线形态气泡标注（kkkline.html：pin 指向 K 线，up=挂高点下指，down=挂低点上指） */
+export type KlineCallout = {
+  index: number;
+  text: string;
+  color?: string;
+  textColor?: string;
+  direction?: "up" | "down";
+};
+
+/** JSON 中 callouts 项：可用 palette 键或自定义 color */
+export type TradingViewKlineCalloutInput = {
+  index: number;
+  text: string;
+  palette?: "red" | "green" | "cyan" | "orange" | "purple" | "pink";
+  color?: string;
+  textColor?: string;
+  direction?: "up" | "down";
+};
+
+/**
+ * 与 remotion/kkkline.html 的 rawData 每行一致：
+ * [时间, 开, 收, 低, 高, 量, Vegas144, Vegas169, 信号文本|null, 颜色|null, up|down|null]
+ */
+export type TradingViewKlineBar = [
+  string,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  string | null,
+  string | null,
+  ("up" | "down") | null,
+];
+
+/** 工程 JSON 内嵌的 K 线数据（逻辑在 echartEthKlinePreset.ts / echartTradingViewOption.ts） */
+export type TradingViewKlineDataInput = {
+  symbol: string;
+  timeframe: string;
+  vegasLegend?: string;
+  /** 推荐：与 kkkline.html 相同的 bars 行格式 */
+  bars?: TradingViewKlineBar[];
+  /** 分拆写法（与 bars 二选一） */
+  categories?: string[];
+  ohlc?: number[][];
+  volumes?: number[];
+  vegas144?: number[];
+  vegas169?: number[];
+  callouts?: TradingViewKlineCalloutInput[];
+  showLastPriceArrow?: boolean;
+  lastPrice?: number;
+  change?: number;
+  changePercent?: number;
+};
+
 /** ECharts：折线 / 柱状 / K 线；trend 控制配色与演示数据走向 */
 export type EchartPanelLayer = TimelineLayerBase & {
   type: "echart_panel";
@@ -85,6 +170,13 @@ export type EchartPanelLayer = TimelineLayerBase & {
     containerStyle?: Record<string, string | number>;
     vegasChannel?: VegasChannelProps;
     shootingStar?: ShootingStarProps;
+    /** TradingView 深色全屏 K 线样式 */
+    tradingViewStyle?: boolean;
+    fullscreen?: boolean;
+    /** K 线行情与标注数据（见 public/sample-project.json） */
+    tradingViewData?: TradingViewKlineDataInput;
+    /** 追加形态气泡（在 tradingViewData.callouts 之外） */
+    callouts?: KlineCallout[];
   };
 };
 
