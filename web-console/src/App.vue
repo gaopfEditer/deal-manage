@@ -131,6 +131,176 @@
           description="未配置 data_views，请在 config.yaml 顶层添加 data_views（id / name / path）"
         />
       </el-tab-pane>
+
+      <el-tab-pane label="发布" name="publish">
+        <div class="publish-layout">
+          <div class="publish-main">
+            <div class="publish-toolbar">
+              <el-select v-model="publishPlatform" placeholder="发布平台" style="width: 200px">
+                <el-option
+                  v-for="p in publishPlatforms"
+                  :key="p.id"
+                  :label="p.name"
+                  :value="p.id"
+                  :disabled="!p.enabled && p.method === 'api'"
+                />
+              </el-select>
+              <el-tag v-if="publishPlatformMeta" :type="publishPlatformTagType" size="small">
+                {{ publishPlatformMeta.method === "cdp" ? "CDP（待接入）" : "OpenAPI" }}
+              </el-tag>
+              <span v-if="publishPlatformMeta?.api_key_masked" class="publish-key-hint">
+                Key: {{ publishPlatformMeta.api_key_masked }}
+              </span>
+              <el-button type="primary" :loading="publishPolishLoading" @click="publishPolish">
+                AI 润色预览
+              </el-button>
+              <el-button
+                type="success"
+                :loading="publishSubmitLoading"
+                :disabled="!canPublishNow"
+                @click="publishSubmit"
+              >
+                发布
+              </el-button>
+              <el-button @click="loadPublishHistory">刷新历史</el-button>
+            </div>
+
+            <el-card shadow="never" class="publish-prompt-card">
+              <template #header>Prompt 模块（风格外壳 + 策略内核）</template>
+              <div class="publish-prompt-row">
+                <span class="publish-prompt-label">组合方式</span>
+                <el-radio-group v-model="publishComposeMode" size="small">
+                  <el-radio-button value="manual">手动选择</el-radio-button>
+                  <el-radio-button value="auto">自动路由组合</el-radio-button>
+                </el-radio-group>
+              </div>
+              <div v-if="publishComposeMode === 'manual'" class="publish-prompt-row publish-prompt-pickers">
+                <el-select
+                  v-model="publishStyleId"
+                  clearable
+                  filterable
+                  placeholder="叙事风格（可选）"
+                  style="width: 240px"
+                >
+                  <el-option
+                    v-for="s in publishPromptStyles"
+                    :key="s.id"
+                    :label="s.name"
+                    :value="s.id"
+                  >
+                    <div class="publish-prompt-option">
+                      <span>{{ s.name }}</span>
+                      <span class="publish-prompt-option-desc">{{ s.description }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
+                <el-select
+                  v-model="publishStrategyId"
+                  clearable
+                  filterable
+                  placeholder="交易策略（可选）"
+                  style="width: 240px"
+                >
+                  <el-option
+                    v-for="s in publishPromptStrategies"
+                    :key="s.id"
+                    :label="s.name"
+                    :value="s.id"
+                  >
+                    <div class="publish-prompt-option">
+                      <span>{{ s.name }}</span>
+                      <span class="publish-prompt-option-desc">{{ s.description }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
+              </div>
+              <div v-else class="publish-prompt-auto-hint">
+                {{ publishRouterHint }}
+              </div>
+              <div v-if="publishLastSelectionText" class="publish-prompt-selection">
+                {{ publishLastSelectionText }}
+              </div>
+            </el-card>
+
+            <el-card shadow="never" class="publish-editor-card">
+              <template #header>原文</template>
+              <el-input
+                v-model="publishDraftOriginal"
+                type="textarea"
+                :rows="6"
+                placeholder="输入待发布正文…"
+                maxlength="8000"
+                show-word-limit
+              />
+            </el-card>
+
+            <el-card shadow="never" class="publish-editor-card">
+              <template #header>
+                <span>润色 / 发布预览</span>
+                <el-checkbox v-model="publishUseAi" style="margin-left: 12px" label="发布时再 AI 润色" />
+              </template>
+              <div class="publish-preview-meta">
+                <el-checkbox v-model="publishIsSign" label="文末署名 (isSign)" />
+                <span class="publish-star-label">质量星级</span>
+                <el-rate v-model="publishStar" :max="5" />
+                <span class="publish-star-num">{{ publishStar }}/5</span>
+              </div>
+              <el-input
+                v-model="publishDraftFinal"
+                type="textarea"
+                :rows="10"
+                placeholder="点击「AI 润色预览」生成，也可直接编辑后发布"
+                maxlength="8000"
+                show-word-limit
+              />
+              <div v-if="publishPolishModel" class="publish-model-hint">
+                润色模型: {{ publishPolishModel }}
+              </div>
+            </el-card>
+
+            <el-card v-if="publishPreviewCardVisible" shadow="never" class="publish-preview-card">
+              <template #header>发布前预览</template>
+              <div class="publish-preview-body">{{ publishPreviewText }}</div>
+            </el-card>
+          </div>
+
+          <div class="publish-side">
+            <div class="publish-side-title">发布历史</div>
+            <div v-loading="publishHistoryLoading" class="publish-history-list">
+              <el-empty v-if="!publishHistory.length" description="暂无发布记录" />
+              <el-card
+                v-for="h in publishHistory"
+                :key="h.id"
+                class="publish-history-item"
+                shadow="hover"
+                @click="applyPublishHistory(h)"
+              >
+                <div class="publish-history-head">
+                  <el-tag :type="publishHistoryStatusType(h.status)" size="small">
+                    {{ publishHistoryStatusText(h.status) }}
+                  </el-tag>
+                  <span class="publish-history-time">{{ h.created_at }}</span>
+                </div>
+                <div class="publish-history-platform">{{ h.platform_name || h.platform }}</div>
+                <div class="publish-history-snippet">
+                  {{ truncateText(h.published_content || h.original_content, 120) }}
+                </div>
+                <el-link
+                  v-if="h.post_url"
+                  type="primary"
+                  :href="h.post_url"
+                  target="_blank"
+                  rel="noopener"
+                  @click.stop
+                >
+                  查看帖子
+                </el-link>
+                <div v-if="h.error" class="publish-history-error">{{ h.error }}</div>
+              </el-card>
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog
@@ -507,6 +677,268 @@ function onImagePreviewClosed() {
   imagePreviewAlt.value = "";
 }
 
+const publishPlatforms = ref([]);
+const publishPlatform = ref("binance_square");
+const publishDraftOriginal = ref("");
+const publishDraftFinal = ref("");
+const publishIsSign = ref(false);
+const publishStar = ref(0);
+const publishUseAi = ref(false);
+const publishPolished = ref(null);
+const publishPolishModel = ref("");
+const publishPolishLoading = ref(false);
+const publishSubmitLoading = ref(false);
+const publishHistory = ref([]);
+const publishHistoryLoading = ref(false);
+const publishShowPreviewCard = ref(false);
+const publishComposeMode = ref("manual");
+const publishStyleId = ref("");
+const publishStrategyId = ref("");
+const publishPromptStyles = ref([]);
+const publishPromptStrategies = ref([]);
+const publishRouterMeta = ref(null);
+const publishLastSelection = ref(null);
+
+const publishRouterHint = computed(() => {
+  const r = publishRouterMeta.value;
+  if (r?.description) return r.description;
+  return "AI 将分析原文，自动匹配叙事风格与交易策略内核并融合输出。";
+});
+
+const publishLastSelectionText = computed(() => {
+  const sel = publishLastSelection.value;
+  if (!sel) return "";
+  if (sel.compose_mode === "auto") {
+    const m = sel.ai_meta || {};
+    const style = publishPromptName(m.style, "styles") || m.style || "—";
+    const strategy = publishPromptName(m.strategy, "strategies") || m.strategy || "—";
+    return `上次自动组合：风格「${style}」+ 策略「${strategy}」`;
+  }
+  const parts = [];
+  if (sel.style) parts.push(`风格「${publishPromptName(sel.style, "styles")}」`);
+  if (sel.strategy) parts.push(`策略「${publishPromptName(sel.strategy, "strategies")}」`);
+  return parts.length ? `上次选用：${parts.join(" + ")}` : "";
+});
+
+function publishPromptName(id, kind) {
+  if (!id) return "";
+  const list = kind === "styles" ? publishPromptStyles.value : publishPromptStrategies.value;
+  const found = list.find((x) => x.id === id);
+  return found?.name || id;
+}
+
+const publishPlatformMeta = computed(() =>
+  publishPlatforms.value.find((p) => p.id === publishPlatform.value)
+);
+
+const publishPlatformTagType = computed(() => {
+  const m = publishPlatformMeta.value;
+  if (!m) return "info";
+  if (m.method === "cdp") return "warning";
+  return m.enabled ? "success" : "danger";
+});
+
+const publishPreviewText = computed(() => (publishDraftFinal.value || publishDraftOriginal.value || "").trim());
+
+const publishPreviewCardVisible = computed(
+  () => publishShowPreviewCard.value && !!publishPreviewText.value
+);
+
+const canPublishNow = computed(() => {
+  const text = publishPreviewText.value;
+  if (!text) return false;
+  const p = publishPlatformMeta.value;
+  if (!p) return false;
+  if (p.method === "cdp") return false;
+  return !!p.enabled;
+});
+
+async function loadPublishPrompts() {
+  try {
+    const res = await fetch("/api/publish/prompts");
+    const data = await res.json();
+    publishPromptStyles.value = data.styles || [];
+    publishPromptStrategies.value = data.strategies || [];
+    publishRouterMeta.value = data.router || null;
+  } catch {
+    publishPromptStyles.value = [];
+    publishPromptStrategies.value = [];
+    publishRouterMeta.value = null;
+  }
+}
+
+async function loadPublishPlatforms() {
+  try {
+    const res = await fetch("/api/publish/platforms");
+    const data = await res.json();
+    publishPlatforms.value = data.items || [];
+    if (!publishPlatforms.value.some((p) => p.id === publishPlatform.value)) {
+      const first = publishPlatforms.value.find((p) => p.enabled) || publishPlatforms.value[0];
+      if (first) publishPlatform.value = first.id;
+    }
+  } catch {
+    publishPlatforms.value = [];
+  }
+}
+
+async function loadPublishHistory() {
+  publishHistoryLoading.value = true;
+  try {
+    const q = new URLSearchParams({ limit: "50", offset: "0" });
+    if (publishPlatform.value) q.set("platform", publishPlatform.value);
+    const res = await fetch(`/api/publish/history?${q}`);
+    const data = await res.json();
+    publishHistory.value = data.items || [];
+  } catch {
+    publishHistory.value = [];
+  } finally {
+    publishHistoryLoading.value = false;
+  }
+}
+
+function applyPolishResult(polished, model, promptSelection) {
+  if (!polished || typeof polished !== "object") return;
+  publishPolished.value = polished;
+  publishDraftFinal.value = String(polished.content || "").trim();
+  publishIsSign.value = !!polished.isSign;
+  const s = Number(polished.star);
+  publishStar.value = Number.isFinite(s) ? Math.max(0, Math.min(5, s)) : 0;
+  if (model) publishPolishModel.value = model;
+  publishShowPreviewCard.value = true;
+  if (promptSelection) {
+    publishLastSelection.value = {
+      compose_mode: promptSelection.compose_mode,
+      style: promptSelection.style,
+      strategy: promptSelection.strategy,
+      ai_meta: polished.meta || null,
+    };
+    if (promptSelection.compose_mode === "auto" && polished.meta) {
+      if (polished.meta.style) publishStyleId.value = polished.meta.style;
+      if (polished.meta.strategy) publishStrategyId.value = polished.meta.strategy;
+    }
+  }
+}
+
+async function publishPolish() {
+  const raw = publishDraftOriginal.value.trim();
+  if (!raw) {
+    ElMessage.warning("请先输入原文");
+    return;
+  }
+  publishPolishLoading.value = true;
+  try {
+    const res = await fetch("/api/publish/polish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: raw,
+        is_sign: publishIsSign.value,
+        compose_mode: publishComposeMode.value,
+        style_id: publishComposeMode.value === "manual" ? publishStyleId.value || null : null,
+        strategy_id:
+          publishComposeMode.value === "manual" ? publishStrategyId.value || null : null,
+      }),
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(data?.detail || res.statusText || "润色失败");
+      return;
+    }
+    applyPolishResult(data.polished, data.model, data.prompt_selection);
+    ElMessage.success("AI 润色完成，可在下方编辑后发布");
+  } finally {
+    publishPolishLoading.value = false;
+  }
+}
+
+async function publishSubmit() {
+  const original = publishDraftOriginal.value.trim();
+  const finalText = publishDraftFinal.value.trim() || original;
+  if (!finalText) {
+    ElMessage.warning("发布内容不能为空");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认发布到「${publishPlatformMeta.value?.name || publishPlatform.value}」？\n\n${truncateText(finalText, 200)}`,
+      "确认发布",
+      { confirmButtonText: "发布", cancelButtonText: "取消", type: "warning" }
+    );
+  } catch {
+    return;
+  }
+
+  publishSubmitLoading.value = true;
+  try {
+    const body = {
+      platform: publishPlatform.value,
+      content: original || finalText,
+      final_content: finalText,
+      is_sign: publishIsSign.value,
+      use_ai: publishUseAi.value,
+    };
+    if (publishPolished.value && !publishUseAi.value) {
+      body.polished = {
+        ...publishPolished.value,
+        content: finalText,
+        isSign: publishIsSign.value,
+        star: publishStar.value,
+      };
+      body.use_ai = false;
+    }
+    const res = await fetch("/api/publish/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(data?.detail || res.statusText || "发布失败");
+      await loadPublishHistory();
+      return;
+    }
+    const item = data.item || {};
+    ElMessage.success(item.post_url ? `发布成功：${item.post_url}` : "发布成功");
+    publishShowPreviewCard.value = true;
+    await loadPublishHistory();
+  } finally {
+    publishSubmitLoading.value = false;
+  }
+}
+
+function applyPublishHistory(h) {
+  if (!h) return;
+  publishDraftOriginal.value = h.original_content || "";
+  publishDraftFinal.value = h.published_content || h.original_content || "";
+  if (h.polished && typeof h.polished === "object") {
+    applyPolishResult(h.polished, "");
+  }
+  publishShowPreviewCard.value = true;
+}
+
+function publishHistoryStatusType(status) {
+  if (status === "published") return "success";
+  if (status === "failed") return "danger";
+  return "info";
+}
+
+function publishHistoryStatusText(status) {
+  if (status === "published") return "已发布";
+  if (status === "failed") return "失败";
+  if (status === "pending") return "处理中";
+  return status || "-";
+}
+
 const dataPostsPlatformLabelsText = computed(() => {
   const pl = dataPostsPlatformLabels.value;
   if (!pl || typeof pl !== "object") return "";
@@ -712,6 +1144,9 @@ function refreshAll() {
   loadCards();
   loadCdpProfiles();
   loadDataViews();
+  loadPublishPlatforms();
+  loadPublishPrompts();
+  loadPublishHistory();
 }
 
 async function dataMarkAllSeen(item) {
@@ -1160,6 +1595,18 @@ watch(dataPostsVisible, (v) => {
   if (!v) closeVideoContextMenu();
 });
 
+watch(mainTab, (tab) => {
+  if (tab === "publish") {
+    loadPublishPlatforms();
+    loadPublishPrompts();
+    loadPublishHistory();
+  }
+});
+
+watch(publishPlatform, () => {
+  if (mainTab.value === "publish") loadPublishHistory();
+});
+
 onMounted(() => {
   refreshAll();
   pollTimer = setInterval(() => loadCards(), 300000);
@@ -1574,5 +2021,148 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;
+}
+
+.publish-layout {
+  display: grid;
+  grid-template-columns: 1fr min(360px, 32vw);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .publish-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.publish-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.publish-prompt-card {
+  margin-bottom: 12px;
+}
+.publish-prompt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.publish-prompt-row:last-child {
+  margin-bottom: 0;
+}
+.publish-prompt-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  min-width: 4.5em;
+}
+.publish-prompt-pickers {
+  padding-left: 0;
+}
+.publish-prompt-option {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+  padding: 2px 0;
+}
+.publish-prompt-option-desc {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+.publish-prompt-auto-hint {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+.publish-prompt-selection {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-color-primary);
+}
+.publish-key-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.publish-editor-card {
+  margin-bottom: 12px;
+}
+.publish-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.publish-star-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+.publish-star-num {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.publish-model-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.publish-preview-card {
+  margin-top: 4px;
+}
+.publish-preview-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+  max-height: 280px;
+  overflow: auto;
+}
+.publish-side-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.publish-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+}
+.publish-history-item {
+  cursor: pointer;
+}
+.publish-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.publish-history-time {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.publish-history-platform {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+.publish-history-snippet {
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.publish-history-error {
+  font-size: 12px;
+  color: var(--el-color-danger);
+  margin-top: 4px;
 }
 </style>

@@ -1,3 +1,15 @@
+# Telegram：全项目共用一个 Bot Token；脚本通过 telegram_chat 别名指定群组
+# Token 优先读环境变量 TELEGRAM_BOT_TOKEN
+telegram:
+  bot_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
+  chats:
+    - id: binance_square
+      name: 币安动态通知群
+      chat_id: -5289237674
+    - id: trendradar
+      name: TrendRadar 推文群
+      chat_id: -5284939836
+
 projects:
   - id: auto-deal-eth
     name: Auto Deal ETH
@@ -22,8 +34,7 @@ projects:
         use_agent: true
         agent_type: "qwen"
         send_to_telegram: true
-        telegram_chat_id: -5289237674
-        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
+        telegram_chat: binance_square
         schedule:
           mode: interval
           seconds: 1800
@@ -38,8 +49,7 @@ projects:
         icon: "🛰"
         run: "python crawler.py"
         send_to_telegram: true
-        telegram_chat_id: -5284939836
-        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
+        telegram_chat: trendradar
         schedule:
           mode: interval
           seconds: 3222
@@ -88,3 +98,19 @@ data_views:
   - id: trendradar-posts-state
     name: TrendRadar / X 推文
     path: "/Users/maotouying/frontend/code/1.operations/python-ai-operate/output/trendradar_posts_state.json"
+
+publish:
+  ollama_model: gemma-uncensored
+  history_max: 200
+  platforms:
+    - id: binance_square
+      name: 币安广场
+      method: api
+      enabled: true
+      api_url: https://www.binance.com/bapi/composite/v1/public/pgc/openApi/content/add
+      api_key: ""
+    - id: twitter
+      name: X / Twitter
+      method: cdp
+      enabled: false
+      note: 后续通过 CDP 浏览器自动化发布

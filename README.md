@@ -27,7 +27,10 @@
 
 ### 5. Telegram 推送（非群监控）
 
-- 任务完成后可按脚本配置 **`send_to_telegram`**、**`telegram_token`**、**`telegram_chat_id`** 向指定会话 **发送消息**（`sendMessage`）。
+- 顶层 **`telegram`** 配置统一 **Bot Token**（或环境变量 **`TELEGRAM_BOT_TOKEN`**），**`chats`** 登记群组别名与 `chat_id`。
+- 脚本仅需 **`send_to_telegram: true`** + **`telegram_chat: <别名>`**（或兼容 **`telegram_chat_id`** 数值 id）。
+- 外部调用 **`POST /api/telegram/send`**，body：`{ "chat_id": "<别名或群组id>", "text": "消息正文" }`。
+- **`GET /api/telegram/config`** 可查看已登记群组（不返回完整 token）。
 - **不包含** 监听 Telegram 群消息、Webhook 收消息等入站逻辑。
 
 ### 6. 内置 AI HTTP 接口（非简单转发网关形态）

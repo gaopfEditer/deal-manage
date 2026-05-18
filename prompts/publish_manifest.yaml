@@ -1,0 +1,40 @@
+# 发布润色 Prompt 模块库（风格外壳 + 策略内核 + 自动路由）
+# 文件路径相对于 prompts/ 目录
+
+styles:
+  - id: style_tianya_classic
+    name: 天涯神贴风格
+    description: 深邃洞察与宿命感，冷眼看资本与阶层博弈
+    file: publish/styles/style_tianya_classic.txt
+  - id: style_classical_history
+    name: 古典历史演义
+    description: 借古讽今，将盘面映射为诸侯混战与谋士叙事
+    file: publish/styles/style_classical_history.txt
+  - id: style_trending_hotspot
+    name: 时事热点映射
+    description: 硬核 KOL 网感，热点快速切入币圈盘面
+    file: publish/styles/style_trending_hotspot.txt
+
+strategies:
+  - id: strategy_left_ambush
+    name: 左侧精细埋伏
+    description: 宽止损左侧挂单，插针必经之路张网，容忍踏空
+    file: publish/strategies/strategy_left_ambush.txt
+  - id: strategy_wide_sl
+    name: 宽止损抗震荡
+    description: 大格局单，容忍假突破与恶意插针，强调定力
+    file: publish/strategies/strategy_wide_sl.txt
+  - id: strategy_realtime_momentum
+    name: 实时动态追击
+    description: 右侧突破或突发消息的闪击单，强调速度与执行力
+    file: publish/strategies/strategy_realtime_momentum.txt
+
+router:
+  id: auto_compose
+  name: 自动组合（AI 路由）
+  description: 由 AI 分析原文并自动匹配风格外壳 + 策略内核后融合输出
+  file: publish/router_publish_auto.txt
+
+# 群内交易信号润色前置说明（/api/publish/signal 自动加载）
+signal:
+  file: publish/signal_group_trade.txt

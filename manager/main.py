@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from .scheduler import ScriptScheduler
 from .upstream_proxy import router as upstream_router
 from .local_ollama import router as local_ollama_router
+from .publish_router import router as publish_router
+from .telegram_router import router as telegram_router
 from .cdp_control import kill_and_start_chrome
 from .data_views_service import (
     DataViewsBrowseStore,
@@ -29,35 +31,24 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_VIEWS_BROWSE_PATH = ROOT_DIR / "manager" / "state" / "data_views_browse.json"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
-# 根据运行环境选择不同配置：优先显式 RUN_ENV，其次按平台推断。
-_run_env_raw = os.getenv("RUN_ENV", "").strip().lower()
-# confi-win.yaml 使用 D:\... 等盘符路径；在 macOS/Linux 上 pathlib 不将其视为绝对路径，
-# 若仍加载该文件，scheduler 会把 script_path 与仓库根目录错误拼接成 .../deal-manage/D:\...
-if _run_env_raw == "win" and os.name != "nt":
+# 默认固定使用 config.yaml；仅当显式设置 RUN_ENV=mac|win 时才切换其它文件（不按平台自动推断）。
+CONFIG_PATH = ROOT_DIR / "config.yaml"
+_run_env = os.getenv("RUN_ENV", "").strip().lower()
+if _run_env == "mac":
+    CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
+elif _run_env == "win":
+    if os.name != "nt":
+        print(
+            "[deal-manage] 提示: RUN_ENV=win 在非 Windows 平台已忽略，仍使用 config.yaml。",
+            file=sys.stderr,
+        )
+    else:
+        CONFIG_PATH = ROOT_DIR / "confi-win.yaml"
+elif _run_env not in ("", "default"):
     print(
-        "[deal-manage] 提示: RUN_ENV=win 在非 Windows 平台已忽略，按默认规则选择配置文件。",
+        f"[deal-manage] 提示: 未知 RUN_ENV={_run_env!r}，仍使用 config.yaml。",
         file=sys.stderr,
     )
-    _RUN_ENV = ""
-else:
-    _RUN_ENV = _run_env_raw
-if _RUN_ENV == "mac":
-    CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
-elif _RUN_ENV == "win":
-    CONFIG_PATH = ROOT_DIR / "confi-win.yaml"
-elif _RUN_ENV == "":
-    # 默认优先主配置，避免同目录多份配置导致“改了 config.yaml 但运行不生效”
-    default_cfg = ROOT_DIR / "config.yaml"
-    if default_cfg.exists():
-        CONFIG_PATH = default_cfg
-    elif sys.platform == "darwin":
-        CONFIG_PATH = ROOT_DIR / "config-mac.yaml"
-    elif os.name == "nt":
-        CONFIG_PATH = ROOT_DIR / "confi-win.yaml"
-    else:
-        CONFIG_PATH = ROOT_DIR / "config.yaml"
-else:
-    CONFIG_PATH = ROOT_DIR / "config.yaml"
 
 # 加载本地 .env（避免运行时缺少 QWEN_API_KEY / GEMINI_API_KEY）
 def _load_local_env() -> None:
@@ -115,6 +106,8 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
         merged = dict(cfg)
         merged.setdefault("cdp_profiles", merged.get("cdp_profiles") or [])
         merged.setdefault("data_views", merged.get("data_views") or [])
+        merged.setdefault("publish", cfg.get("publish") or {})
+        merged.setdefault("telegram", cfg.get("telegram") or {})
         return merged
 
     normalized: list[dict[str, Any]] = []
@@ -150,7 +143,9 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
                     "pass_action": item.get("pass_action", True),
                     "to_memos": item.get("to_memos", False),
                     "send_to_telegram": _yaml_bool_field(item, "send_to_telegram", False),
+                    "telegram_chat": item.get("telegram_chat"),
                     "telegram_chat_id": item.get("telegram_chat_id"),
+                    # 已废弃：请使用顶层 telegram.bot_token
                     "telegram_token": item.get("telegram_token"),
                     "schedule": item.get("schedule", {}),
                 }
@@ -159,12 +154,14 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "scripts": normalized,
         "cdp_profiles": list(cfg.get("cdp_profiles") or []),
         "data_views": list(cfg.get("data_views") or []),
+        "publish": cfg.get("publish") or {},
+        "telegram": cfg.get("telegram") or {},
     }
 
 
 def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
-        return {"scripts": [], "cdp_profiles": [], "data_views": []}
+        return {"scripts": [], "cdp_profiles": [], "data_views": [], "publish": {}, "telegram": {}}
     with CONFIG_PATH.open("r", encoding="utf-8") as file:
         cfg = yaml.safe_load(file) or {}
     return _normalize_config(cfg)
@@ -185,6 +182,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Script Matrix Manager", lifespan=lifespan)
 app.include_router(upstream_router)
 app.include_router(local_ollama_router)
+app.include_router(publish_router)
+app.include_router(telegram_router)
 app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 

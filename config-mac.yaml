@@ -1,3 +1,13 @@
+telegram:
+  bot_token: ""
+  chats:
+    - id: binance_square
+      name: 币安动态通知群
+      chat_id: -5289237674
+    - id: trendradar
+      name: TrendRadar 推文群
+      chat_id: -5284939836
+
 projects:
   - id: auto-deal-eth
     name: Auto Deal ETH
@@ -22,8 +32,7 @@ projects:
         use_agent: true
         agent_type: "qwen"
         send_to_telegram: true
-        telegram_chat_id: -5289237674
-        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
+        telegram_chat: binance_square
         schedule:
           mode: interval
           seconds: 1800
@@ -38,8 +47,7 @@ projects:
         icon: "🛰"
         run: "python crawler.py"
         send_to_telegram: true
-        telegram_chat_id: -5284939836
-        telegram_token: "8586481737:AAGxMgzPMeGSlKlKWlb2klVOM6frq4-u2OA"
+        telegram_chat: trendradar
         schedule:
           mode: interval
           seconds: 3222

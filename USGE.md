@@ -29,6 +29,90 @@ pip install -r requirements.txt
 
 环境变量请参考项目根目录 **`.env.example`**，复制为 `.env` 后按需填写（可用 `python-dotenv` 或系统环境变量注入）。
 
+### Telegram 推送（统一 Bot + 外部发信）
+
+全项目共用一个 Bot Token，在 `config.yaml` 顶层配置 **`telegram`**（或环境变量 **`TELEGRAM_BOT_TOKEN`**）。群组在 `telegram.chats` 里登记别名与 `chat_id`；脚本任务用 `send_to_telegram: true` + `telegram_chat: <别名>` 即可。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/telegram/config` | 查看已登记群组、Token 是否已配置（掩码） |
+| POST | `/api/telegram/send` | 向指定群组发送文本消息 |
+
+**`POST /api/telegram/send` 请求体：**
+
+- `chat_id`（必填）：数值群组 id，或 `config.yaml` 里 `telegram.chats[].id` 别名（如 `binance_square`）
+- `text`（必填）：消息正文
+- `parse_mode`（可选）：`HTML` / `Markdown` / `MarkdownV2`
+- `disable_web_page_preview`（可选）：布尔
+
+**示例：直接指定群组 id**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/telegram/send \
+  -H 'Content-Type: application/json' \
+  -d '{"chat_id":-5289237674,"text":"测试消息"}'
+```
+
+**示例：使用配置别名（与 `telegram.chats[].id` 一致）**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/telegram/send \
+  -H 'Content-Type: application/json' \
+  -d '{"chat_id":"binance_square","text":"测试消息"}'
+```
+
+**查看已登记群组：**
+
+```bash
+curl -s http://127.0.0.1:8000/api/telegram/config
+```
+
+成功时 `send` 接口返回 `{"ok":true,"chat_id":"...", ...}`；失败时 HTTP 4xx/5xx，`detail` 为错误说明。需先启动后端（`uvicorn` 或 `python run.py`）。
+
+### 群内交易信号 → 润色 → 发布币安广场
+
+将**群内原始交易信号**与 **`prompts/publish_manifest.yaml` 中的 style id**（及可选 strategy id）一并提交，由 Ollama 按模块聚合文案后发布到币安广场。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/publish/prompts` | 列出 `styles` / `strategies` / `router` 模块 id |
+| POST | `/api/publish/signal` | 信号润色 + 发布（`publish: false` 时仅润色） |
+
+**`style_ids` 可选值（叙事外壳）：** `style_tianya_classic`、`style_classical_history`、`style_trending_hotspot`
+
+**`strategy_id` 可选值（策略内核）：** `strategy_left_ambush`、`strategy_wide_sl`、`strategy_realtime_momentum`
+
+**示例：指定风格 + 左侧埋伏策略，润色并发布**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/publish/signal \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "signal": "ETH 做空（25连胜） 仓位思路强平控制3000及以上\n2178市价直接空 100倍 2%保证金\n再挂2263（逃命点位只给一次机会逃）100倍 3%保证金\n第一芷楹2018（或者靠嘴喊芷楹） 芷楹70% 移动保本损\n第二芷楹1788\n第三芷楹1388\n芷損2300。#ETH",
+    "style_ids": ["style_tianya_classic"],
+    "strategy_id": "strategy_left_ambush",
+    "compose_mode": "manual",
+    "publish": true
+  }'
+```
+
+**示例：多个风格候选，由 AI 自动择一并匹配策略**
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/publish/signal \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "signal": "ETH 做空（25连胜） ...",
+    "style_ids": ["style_tianya_classic", "style_classical_history"],
+    "compose_mode": "auto",
+    "publish": true
+  }'
+```
+
+**仅预览润色、不发布：** 请求体加 `"publish": false`，响应含 `polished.content` 与 `prompt_selection`。
+
+成功发布时响应含 `publish_item.post_url`（币安广场帖子链接）。需配置 `BINANCE_SQUARE_API_KEY` 或 `config.yaml` → `publish.platforms`。
+
 ## 前端（Vue 3 + Element Plus）
 
 ```bash
@@ -113,7 +197,7 @@ lsof -ti:8000 | xargs kill -9
 --media-cache-size=10485760 \
 --password-store=basic
 
-// g17681831402@163.com gpg1086 
+// g17681831402@163.com gpg1086 see/推送
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
 --remote-debugging-port=9224 \
 --user-data-dir="/Users/maotouying/frontend/chrome-debug-9224" \

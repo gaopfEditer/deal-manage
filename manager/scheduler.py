@@ -17,6 +17,11 @@ import time
 
 import httpx
 from .data_views_service import extract_posts_flat, read_json_file
+from .telegram_service import (
+    load_telegram_settings,
+    resolve_script_telegram_target,
+    send_telegram_message,
+)
 
 
 @dataclass
@@ -634,14 +639,6 @@ class ScriptScheduler:
                 return str(v).strip()
         return ""
 
-    async def _send_telegram_message(self, token: str, chat_id: str, text: str) -> None:
-        api = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text}
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
-            resp = await client.post(api, json=payload)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Telegram send failed status={resp.status_code}, body={resp.text[:500]!r}")
-
     async def _maybe_send_telegram_notifications(
         self,
         *,
@@ -657,14 +654,15 @@ class ScriptScheduler:
                 f"[{self._now()}] Telegram notify: disabled by send_to_telegram={script_cfg.get('send_to_telegram')!r}."
             )
             return
-        token = str(script_cfg.get("telegram_token") or "").strip()
-        chat_id = str(script_cfg.get("telegram_chat_id") or "").strip()
+        tg_settings = load_telegram_settings(self.config)
+        token, chat_id = resolve_script_telegram_target(script_cfg, tg_settings)
         await runtime.log_queue.put(
-            f"[{self._now()}] Telegram notify: config loaded chat_id={chat_id!r}, token_set={bool(token)}."
+            f"[{self._now()}] Telegram notify: chat_id={chat_id!r}, token_set={bool(token)}."
         )
         if not token or not chat_id:
             await runtime.log_queue.put(
-                f"[{self._now()}] Telegram notify skipped: missing telegram_token or telegram_chat_id."
+                f"[{self._now()}] Telegram notify skipped: missing bot token or chat_id "
+                "(配置 telegram.bot_token + 脚本 telegram_chat / telegram_chat_id)。"
             )
             return
 
@@ -729,7 +727,9 @@ class ScriptScheduler:
         for url, text in to_send:
             msg = f"【{script_id}】\n{text}\n\n{url}"
             try:
-                await self._send_telegram_message(token=token, chat_id=chat_id, text=msg)
+                await send_telegram_message(
+                    bot_token=token, chat_id=chat_id, text=msg
+                )
             except Exception as exc:  # noqa: BLE001
                 await runtime.log_queue.put(
                     f"[{self._now()}] Telegram send failed: {type(exc).__name__}: {exc!r}"
@@ -835,7 +835,7 @@ class ScriptScheduler:
                 raise FileNotFoundError(
                     "script_path 为 Windows 盘符路径 "
                     f"{raw!r}，但当前运行在非 Windows 系统，不能与仓库根目录拼接。"
-                    "请改为本机 Unix 绝对路径，并确认未误设 RUN_ENV=win（否则会加载 confi-win.yaml）。"
+                    "请在本机 config.yaml 中改为 Unix 绝对路径。"
                 )
             base = self.root_dir / base
         if base.is_dir():
@@ -948,7 +948,7 @@ class ScriptScheduler:
                 raise FileNotFoundError(
                     "script_path 为 Windows 盘符路径 "
                     f"{spr!r}，但当前运行在非 Windows 系统，不能与仓库根目录拼接。"
-                    "请改为本机 Unix 绝对路径，并确认未误设 RUN_ENV=win。"
+                    "请在本机 config.yaml 中改为 Unix 绝对路径。"
                 )
             script_path = self.root_dir / script_path
         cmd = [python_executable, str(script_path)]
