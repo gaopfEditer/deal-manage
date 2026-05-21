@@ -1,11 +1,10 @@
 """
 本地 Ollama `/api/generate` 代理：配置见项目根目录 `ollama_local.yaml`。
 
-- POST /ollama/chat        JSON：`prompt` 或 `message`，可选 `role`（对应 `prompts/{role}.txt`
-                          全文与用户内容拼接）、`model`、`stream`
-- POST /ollama/chat-image  JSON：`prompt`；图片三选一或组合：`images`（base64）、`image_path`（单路径）、
-                          `image_paths`（路径列表，服务端读盘再编码）；可选 `role`、`model`。
-                          multipart：`file`/`files` 上传；可选 `image_path`、`image_paths`（每行一个路径可重复字段）、`role`
+- POST /ollama/chat        JSON：`prompt` 或 `message`；可选 `promat`、`role`、`model`、`stream`；
+                          `promat=tv_k_line` 时前置 `prompts/tv_k_line.txt` 内容；
+                          可选附图：`images`（base64）、`image_path`、`image_paths`（有图则走 vision_model + payload.images）
+- POST /ollama/chat-image  同上，但附图必填；支持 multipart 上传 file/files
 """
 from __future__ import annotations
 
@@ -32,20 +31,23 @@ def _prompts_dir() -> Path:
     return PROMPTS_DIR
 
 
-def _sanitize_role(role: str) -> str:
-    r = (role or "").strip()
+def _sanitize_prompt_key(key: str, field: str) -> str:
+    r = (key or "").strip()
     if not r:
         return ""
     if ".." in r or "/" in r or "\\" in r:
-        raise HTTPException(status_code=400, detail="非法 role")
+        raise HTTPException(status_code=400, detail=f"非法 {field}")
     if not all(ch in _ROLE_ALLOWED for ch in r):
-        raise HTTPException(status_code=400, detail="role 仅允许字母、数字、下划线、点、连字符")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} 仅允许字母、数字、下划线、点、连字符",
+        )
     return r
 
 
-def _load_role_prompt(role: str) -> str:
-    """读取 prompts/{role}.txt；文件必须存在且路径限制在 prompts 目录内。"""
-    safe = _sanitize_role(role)
+def _load_prompt_file(key: str, field: str) -> str:
+    """读取 prompts/{key}.txt；文件必须存在且路径限制在 prompts 目录内。"""
+    safe = _sanitize_prompt_key(key, field)
     if not safe:
         return ""
     base = _prompts_dir().resolve()
@@ -53,27 +55,54 @@ def _load_role_prompt(role: str) -> str:
     try:
         candidate.relative_to(base)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="非法 role 路径") from exc
+        raise HTTPException(status_code=400, detail=f"非法 {field} 路径") from exc
     if not candidate.is_file():
         raise HTTPException(
             status_code=404,
-            detail=f"未找到角色提示词文件 prompts/{safe}.txt",
+            detail=f"未找到提示词文件 prompts/{safe}.txt",
         )
     return candidate.read_text(encoding="utf-8", errors="replace").strip()
 
 
-def _merge_role_prefix(role: str | None, user_text: str) -> tuple[str, str | None]:
+_PROMPT_SEP = "\n\n---\n\n"
+
+
+def _merge_prompt_prefixes(
+    *,
+    promat: str | None,
+    role: str | None,
+    user_text: str,
+) -> tuple[str, str | None, str | None]:
     """
-    若有 role：全文 = 角色文件内容 + 分隔 + 用户输入。
-    返回 (最终 prompt, 使用的 role 名或 None)。
+    按顺序拼接：promat 模板 → role 模板 → 用户输入。
+    返回 (最终 prompt, 使用的 promat 名或 None, 使用的 role 名或 None)。
     """
-    if not role or not str(role).strip():
-        return user_text, None
-    prefix = _load_role_prompt(str(role).strip())
-    if not prefix:
-        return user_text, str(role).strip()
-    merged = f"{prefix}\n\n---\n\n{user_text}"
-    return merged, str(role).strip()
+    segments: list[str] = []
+    used_promat: str | None = None
+    used_role: str | None = None
+
+    if promat and str(promat).strip():
+        name = str(promat).strip()
+        prefix = _load_prompt_file(name, "promat")
+        if prefix:
+            segments.append(prefix)
+        used_promat = name
+
+    if role and str(role).strip():
+        name = str(role).strip()
+        prefix = _load_prompt_file(name, "role")
+        if prefix:
+            segments.append(prefix)
+        used_role = name
+
+    if user_text.strip():
+        segments.append(user_text)
+
+    if not segments:
+        return user_text, used_promat, used_role
+    if len(segments) == 1 and not user_text.strip():
+        return segments[0], used_promat, used_role
+    return _PROMPT_SEP.join(segments), used_promat, used_role
 
 
 def _config_path() -> Path:
@@ -88,11 +117,14 @@ def load_ollama_settings() -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "base_url": "http://localhost:11434",
         "generate_endpoint": "/api/generate",
-        "default_model": "gemma-uncensored",
-        "vision_model": "",
+        "default_model": "gemma4:latest",
+        "vision_model": "gemma4:latest",
         "stream": False,
         "timeout_seconds": 300,
-        "allowed_image_path_roots": [],
+        "allowed_image_path_roots": [
+            "/Users/maotouying/Downloads",
+            "/tmp",
+        ],
     }
     if not path.exists():
         return defaults
@@ -138,16 +170,21 @@ def _strip_data_url_b64(s: str) -> str:
 
 
 class OllamaChatJson(BaseModel):
+    promat: str = ""
     role: str = ""
     prompt: str = ""
     message: str = ""
     model: str | None = None
     stream: bool | None = None
+    images: list[str] = Field(default_factory=list)
+    image_path: str = ""
+    image_paths: list[str] = Field(default_factory=list)
 
 
 class OllamaImageJson(BaseModel):
+    promat: str = ""
     role: str = ""
-    prompt: str
+    prompt: str = ""
     images: list[str] = Field(default_factory=list)
     image_path: str = ""
     image_paths: list[str] = Field(default_factory=list)
@@ -216,10 +253,72 @@ def _path_must_be_allowed_file(path: Path, roots: list[Path]) -> Path:
     )
 
 
+def _encode_image_file_b64(image_path: Path) -> str:
+    """读取本地图片二进制并转为 Ollama /api/generate 所需的 base64 字符串。"""
+    with image_path.open("rb") as image_file:
+        return base64.standard_b64encode(image_file.read()).decode("utf-8")
+
+
 def _read_local_image_b64_sync(path_str: str, roots: list[Path]) -> str:
     final = _path_must_be_allowed_file(Path(path_str), roots)
-    raw_b = final.read_bytes()
-    return base64.standard_b64encode(raw_b).decode("ascii")
+    return _encode_image_file_b64(final)
+
+
+def prepare_ollama_generate_payload(
+    settings: dict[str, Any],
+    *,
+    prompt: str,
+    model_override: str | None = None,
+    stream: bool | None = None,
+    images_b64: list[str] | None = None,
+) -> tuple[dict[str, Any], str, bool]:
+    """
+    组装 Ollama /api/generate 请求体。
+    有附图时使用 vision_model，并在 payload 中附带 images 数组；无图则纯文本。
+    """
+    images: list[str] = []
+    for raw in images_b64 or []:
+        if isinstance(raw, str) and raw.strip():
+            images.append(_strip_data_url_b64(raw))
+
+    has_images = len(images) > 0
+    model = (
+        _resolve_vision_model(settings, model_override)
+        if has_images
+        else _resolve_text_model(settings, model_override)
+    )
+    stream_val = settings["stream"] if stream is None else bool(stream)
+
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": stream_val,
+    }
+    if has_images:
+        payload["images"] = images
+    return payload, model, has_images
+
+
+async def _collect_images_b64(
+    settings: dict[str, Any],
+    *,
+    images: list[str] | None = None,
+    image_path: str | None = None,
+    image_paths: list[str] | None = None,
+) -> list[str]:
+    out: list[str] = []
+    for img in images or []:
+        if isinstance(img, str) and img.strip():
+            out.append(_strip_data_url_b64(img))
+    path_list: list[str] = []
+    for p in image_paths or []:
+        if isinstance(p, str) and p.strip():
+            path_list.append(p.strip())
+    if image_path and str(image_path).strip():
+        path_list.append(str(image_path).strip())
+    if path_list:
+        await _append_images_from_paths(path_list, settings, out)
+    return out
 
 
 async def _append_images_from_paths(path_strings: list[str], settings: dict[str, Any], out: list[str]) -> None:
@@ -252,19 +351,29 @@ async def ollama_chat(request: Request):
 
     body = OllamaChatJson.model_validate(raw)
     user_part = _user_prompt(body)
-    if not user_part:
-        raise HTTPException(status_code=400, detail="缺少 prompt 或 message")
+    if not user_part and not (body.promat or "").strip() and not (body.role or "").strip():
+        raise HTTPException(status_code=400, detail="缺少 prompt、message 或 promat/role 模板")
 
-    prompt, used_role = _merge_role_prefix(body.role or None, user_part)
+    prompt, used_promat, used_role = _merge_prompt_prefixes(
+        promat=body.promat or None,
+        role=body.role or None,
+        user_text=user_part,
+    )
 
-    model = _resolve_text_model(settings, body.model)
-    stream = settings["stream"] if body.stream is None else bool(body.stream)
-
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "stream": stream,
-    }
+    images_b64 = await _collect_images_b64(
+        settings,
+        images=body.images,
+        image_path=body.image_path,
+        image_paths=body.image_paths,
+    )
+    payload, model, has_images = prepare_ollama_generate_payload(
+        settings,
+        prompt=prompt,
+        model_override=body.model,
+        stream=body.stream,
+        images_b64=images_b64,
+    )
+    stream = bool(payload["stream"])
 
     if not stream:
         try:
@@ -286,7 +395,12 @@ async def ollama_chat(request: Request):
             "model": model,
             "response": data.get("response", ""),
             "raw": data,
+            "vision": has_images,
         }
+        if has_images:
+            out["image_count"] = len(images_b64)
+        if used_promat is not None:
+            out["promat"] = used_promat
         if used_role is not None:
             out["role"] = used_role
         return JSONResponse(content=out)
@@ -306,6 +420,8 @@ async def ollama_chat(request: Request):
                 yield err
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    if used_promat:
+        headers["X-Ollama-Promat"] = used_promat
     if used_role:
         headers["X-Ollama-Role"] = used_role
 
@@ -323,6 +439,7 @@ async def ollama_chat_image(request: Request):
 
     ct = (request.headers.get("content-type") or "").lower()
     user_prompt: str
+    promat_raw: str | None = None
     role_raw: str | None = None
     model_override: str | None = None
     stream_override: bool | None = None
@@ -335,22 +452,18 @@ async def ollama_chat_image(request: Request):
             raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
         data = OllamaImageJson.model_validate(raw)
         user_prompt = (data.prompt or "").strip()
-        if not user_prompt:
-            raise HTTPException(status_code=400, detail="缺少 prompt")
+        promat_raw = (data.promat or "").strip() or None
         role_raw = (data.role or "").strip() or None
+        if not user_prompt and not promat_raw and not role_raw:
+            raise HTTPException(status_code=400, detail="缺少 prompt 或 promat/role 模板")
         model_override = data.model
         stream_override = data.stream
-        for img in data.images:
-            if isinstance(img, str) and img.strip():
-                images_b64.append(_strip_data_url_b64(img))
-        path_list: list[str] = []
-        for p in data.image_paths or []:
-            if isinstance(p, str) and p.strip():
-                path_list.append(p.strip())
-        if (data.image_path or "").strip():
-            path_list.append(str(data.image_path).strip())
-        if path_list:
-            await _append_images_from_paths(path_list, settings, images_b64)
+        images_b64 = await _collect_images_b64(
+            settings,
+            images=data.images,
+            image_path=data.image_path,
+            image_paths=data.image_paths,
+        )
         if not images_b64:
             raise HTTPException(
                 status_code=400,
@@ -359,10 +472,12 @@ async def ollama_chat_image(request: Request):
     else:
         form = await request.form()
         user_prompt = str(form.get("prompt") or "").strip()
-        if not user_prompt:
-            raise HTTPException(status_code=400, detail="缺少 prompt")
+        pfv = form.get("promat")
+        promat_raw = str(pfv).strip() if pfv else None
         rfv = form.get("role")
         role_raw = str(rfv).strip() if rfv else None
+        if not user_prompt and not promat_raw and not role_raw:
+            raise HTTPException(status_code=400, detail="缺少 prompt 或 promat/role 模板")
         m = form.get("model")
         model_override = str(m).strip() if m else None
         sv = form.get("stream")
@@ -391,17 +506,20 @@ async def ollama_chat_image(request: Request):
                 detail="请上传 file/files，或提供 image_path / image_paths（本机绝对/相对路径）",
             )
 
-    prompt, used_role = _merge_role_prefix(role_raw, user_prompt)
+    prompt, used_promat, used_role = _merge_prompt_prefixes(
+        promat=promat_raw,
+        role=role_raw,
+        user_text=user_prompt,
+    )
 
-    model = _resolve_vision_model(settings, model_override)
-    stream = settings["stream"] if stream_override is None else bool(stream_override)
-
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "images": images_b64,
-        "stream": stream,
-    }
+    payload, model, has_images = prepare_ollama_generate_payload(
+        settings,
+        prompt=prompt,
+        model_override=model_override,
+        stream=stream_override,
+        images_b64=images_b64,
+    )
+    stream = bool(payload["stream"])
 
     if not stream:
         try:
@@ -423,7 +541,11 @@ async def ollama_chat_image(request: Request):
             "model": model,
             "response": data.get("response", ""),
             "raw": data,
+            "vision": has_images,
+            "image_count": len(images_b64),
         }
+        if used_promat is not None:
+            out_img["promat"] = used_promat
         if used_role is not None:
             out_img["role"] = used_role
         return JSONResponse(content=out_img)
@@ -442,6 +564,8 @@ async def ollama_chat_image(request: Request):
                 yield str(exc).encode("utf-8")
 
     headers_img = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    if used_promat:
+        headers_img["X-Ollama-Promat"] = used_promat
     if used_role:
         headers_img["X-Ollama-Role"] = used_role
 

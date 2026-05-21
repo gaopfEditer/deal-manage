@@ -232,6 +232,57 @@
                 maxlength="8000"
                 show-word-limit
               />
+              <div class="publish-attach-section">
+                <div class="publish-attach-head">
+                  <span class="publish-attach-title">附图</span>
+                  <span class="publish-attach-hint">
+                    最多 {{ publishAttachMax }} 张，单张 ≤5MB；可选填币安 imageToken（接入上传 API 后随帖发布）
+                  </span>
+                </div>
+                <div class="publish-attach-toolbar">
+                  <el-upload
+                    action="#"
+                    list-type="picture-card"
+                    :auto-upload="false"
+                    :show-file-list="false"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    multiple
+                    :disabled="publishAttachments.length >= publishAttachMax"
+                    :on-change="onPublishImageSelected"
+                  >
+                    <span class="publish-upload-plus">+</span>
+                  </el-upload>
+                  <el-input
+                    v-model="publishImageTokensText"
+                    class="publish-image-tokens"
+                    clearable
+                    placeholder="imageToken，多个用英文逗号分隔（可选）"
+                  />
+                </div>
+                <div v-if="publishAttachments.length" class="publish-attach-grid">
+                  <div
+                    v-for="img in publishAttachments"
+                    :key="img.id"
+                    class="publish-attach-item"
+                  >
+                    <img
+                      :src="img.previewUrl"
+                      :alt="img.name"
+                      class="publish-attach-thumb"
+                      @click="openImagePreview(img.previewUrl, img.name)"
+                    />
+                    <button
+                      type="button"
+                      class="publish-attach-remove"
+                      title="移除"
+                      @click="removePublishAttachment(img.id)"
+                    >
+                      ×
+                    </button>
+                    <span class="publish-attach-name">{{ img.name }}</span>
+                  </div>
+                </div>
+              </div>
             </el-card>
 
             <el-card shadow="never" class="publish-editor-card">
@@ -261,6 +312,16 @@
             <el-card v-if="publishPreviewCardVisible" shadow="never" class="publish-preview-card">
               <template #header>发布前预览</template>
               <div class="publish-preview-body">{{ publishPreviewText }}</div>
+              <div v-if="publishAttachments.length" class="publish-preview-images">
+                <img
+                  v-for="img in publishAttachments"
+                  :key="`preview-${img.id}`"
+                  :src="img.previewUrl"
+                  :alt="img.name"
+                  class="publish-preview-thumb"
+                  @click="openImagePreview(img.previewUrl, img.name)"
+                />
+              </div>
             </el-card>
           </div>
 
@@ -295,6 +356,15 @@
                 >
                   查看帖子
                 </el-link>
+                <div v-if="h.attachments?.length" class="publish-history-thumbs" @click.stop>
+                  <img
+                    v-for="a in h.attachments"
+                    :key="`${h.id}-${a.id}`"
+                    :src="publishMediaUrl(a.url)"
+                    :alt="a.id"
+                    class="publish-history-thumb"
+                  />
+                </div>
                 <div v-if="h.error" class="publish-history-error">{{ h.error }}</div>
               </el-card>
             </div>
@@ -698,6 +768,9 @@ const publishPromptStyles = ref([]);
 const publishPromptStrategies = ref([]);
 const publishRouterMeta = ref(null);
 const publishLastSelection = ref(null);
+const publishAttachMax = 9;
+const publishAttachments = ref([]);
+const publishImageTokensText = ref("");
 
 const publishRouterHint = computed(() => {
   const r = publishRouterMeta.value;
@@ -725,6 +798,72 @@ function publishPromptName(id, kind) {
   const list = kind === "styles" ? publishPromptStyles.value : publishPromptStrategies.value;
   const found = list.find((x) => x.id === id);
   return found?.name || id;
+}
+
+function publishMediaUrl(path) {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function clearPublishAttachments() {
+  for (const item of publishAttachments.value) {
+    if (item.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(item.previewUrl);
+  }
+  publishAttachments.value = [];
+}
+
+function publishImagesPayload() {
+  return publishAttachments.value
+    .map((x) => x.base64)
+    .filter((s) => typeof s === "string" && s.trim());
+}
+
+function publishImageTokensPayload() {
+  return publishImageTokensText.value
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function onPublishImageSelected(uploadFile) {
+  if (!uploadFile || uploadFile.status !== "ready") return;
+  const raw = uploadFile.raw;
+  if (!raw) return;
+  if (!String(raw.type || "").startsWith("image/")) {
+    ElMessage.warning("仅支持图片文件");
+    return;
+  }
+  if (publishAttachments.value.length >= publishAttachMax) {
+    ElMessage.warning(`最多 ${publishAttachMax} 张附图`);
+    return;
+  }
+  if (raw.size > 5 * 1024 * 1024) {
+    ElMessage.warning("单张图片不能超过 5MB");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result || "");
+    publishAttachments.value.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: raw.name || "image",
+      previewUrl: URL.createObjectURL(raw),
+      base64: dataUrl,
+      mime: raw.type,
+      size: raw.size,
+    });
+  };
+  reader.onerror = () => ElMessage.error("读取图片失败");
+  reader.readAsDataURL(raw);
+}
+
+function removePublishAttachment(id) {
+  const idx = publishAttachments.value.findIndex((x) => x.id === id);
+  if (idx < 0) return;
+  const item = publishAttachments.value[idx];
+  if (item.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(item.previewUrl);
+  publishAttachments.value.splice(idx, 1);
 }
 
 const publishPlatformMeta = computed(() =>
@@ -875,6 +1014,8 @@ async function publishSubmit() {
 
   publishSubmitLoading.value = true;
   try {
+    const images = publishImagesPayload();
+    const imageTokens = publishImageTokensPayload();
     const body = {
       platform: publishPlatform.value,
       content: original || finalText,
@@ -882,6 +1023,8 @@ async function publishSubmit() {
       is_sign: publishIsSign.value,
       use_ai: publishUseAi.value,
     };
+    if (images.length) body.images = images;
+    if (imageTokens.length) body.image_tokens = imageTokens;
     if (publishPolished.value && !publishUseAi.value) {
       body.polished = {
         ...publishPolished.value,
@@ -908,6 +1051,8 @@ async function publishSubmit() {
       return;
     }
     const item = data.item || {};
+    const warn = (data.warnings || item.warnings || []).join(" ");
+    if (warn) ElMessage.warning(warn);
     ElMessage.success(item.post_url ? `发布成功：${item.post_url}` : "发布成功");
     publishShowPreviewCard.value = true;
     await loadPublishHistory();
@@ -920,6 +1065,23 @@ function applyPublishHistory(h) {
   if (!h) return;
   publishDraftOriginal.value = h.original_content || "";
   publishDraftFinal.value = h.published_content || h.original_content || "";
+  clearPublishAttachments();
+  if (Array.isArray(h.attachments)) {
+    for (const a of h.attachments) {
+      publishAttachments.value.push({
+        id: a.id || a.url,
+        name: a.id || "image",
+        previewUrl: publishMediaUrl(a.url),
+        base64: "",
+        mime: a.mime || "",
+        size: a.size_bytes || 0,
+        fromHistory: true,
+      });
+    }
+  }
+  publishImageTokensText.value = Array.isArray(h.image_tokens)
+    ? h.image_tokens.join(", ")
+    : "";
   if (h.polished && typeof h.polished === "object") {
     applyPolishResult(h.polished, "");
   }
@@ -1617,6 +1779,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   detachImagePreviewPanListeners();
+  clearPublishAttachments();
   if (pollTimer) clearInterval(pollTimer);
   if (eventSource.value) {
     eventSource.value.close();
@@ -2164,5 +2327,111 @@ body {
   font-size: 12px;
   color: var(--el-color-danger);
   margin-top: 4px;
+}
+.publish-attach-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.publish-attach-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.publish-attach-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.publish-attach-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.publish-attach-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.publish-image-tokens {
+  flex: 1;
+  min-width: 220px;
+  max-width: 420px;
+}
+.publish-upload-plus {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--el-text-color-secondary);
+}
+.publish-attach-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.publish-attach-item {
+  position: relative;
+  width: 96px;
+}
+.publish-attach-thumb {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color);
+  cursor: zoom-in;
+  display: block;
+  background: var(--el-fill-color-dark);
+}
+.publish-attach-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 20px;
+}
+.publish-attach-name {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.publish-preview-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.publish-preview-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color);
+  cursor: zoom-in;
+}
+.publish-history-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.publish-history-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--el-border-color);
 }
 </style>

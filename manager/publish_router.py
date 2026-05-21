@@ -5,7 +5,10 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+
+from .publish_attachments import resolve_media_file
 
 from .publish_prompts import list_publish_prompt_catalog
 from .publish_prompts import validate_module_ids
@@ -67,6 +70,14 @@ class PublishPayload(BaseModel):
     is_sign: bool | None = None
     use_ai: bool = True
     polished: dict[str, Any] | None = None
+    images: list[str] | None = Field(
+        None,
+        description="附图 base64 列表（可带 data:image/...;base64, 前缀），最多 9 张",
+    )
+    image_tokens: list[str] | None = Field(
+        None,
+        description="币安广场 imageToken（若已上传）；与 images 可同时传",
+    )
 
 
 def _settings() -> dict[str, Any]:
@@ -84,6 +95,23 @@ async def get_publish_prompts():
 async def get_platforms():
     settings = _settings()
     return {"items": list_platforms_public(settings)}
+
+
+@router.get("/media/{publish_id}/{file_id}")
+async def get_publish_media(publish_id: str, file_id: str):
+    try:
+        path = await asyncio.to_thread(resolve_media_file, publish_id, file_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    media = "image/jpeg"
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        media = "image/png"
+    elif suffix == ".webp":
+        media = "image/webp"
+    elif suffix == ".gif":
+        media = "image/gif"
+    return FileResponse(path, media_type=media)
 
 
 @router.get("/history")
@@ -200,8 +228,13 @@ async def post_publish(payload: PublishPayload):
             is_sign=payload.is_sign,
             use_ai=payload.use_ai,
             polished_override=payload.polished,
+            images=payload.images,
+            image_tokens=payload.image_tokens,
         )
-        return {"ok": True, "item": item}
+        out: dict[str, Any] = {"ok": True, "item": item}
+        if item.get("warnings"):
+            out["warnings"] = item["warnings"]
+        return out
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

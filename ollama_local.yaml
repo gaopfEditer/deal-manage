@@ -3,9 +3,9 @@
 base_url: "http://localhost:11434"
 generate_endpoint: "/api/generate"
 # 纯文本默认模型
-default_model: "llama-kline-agent"
-# 带图请求默认模型；不填则使用 default_model
-vision_model: ""
+default_model: "gemma4:latest"
+# 带图请求默认模型（与 default_model 一致时可多模态看图）
+vision_model: "gemma4:latest"
 # 未在请求体中指定 stream 时的默认值
 stream: false
 timeout_seconds: 300

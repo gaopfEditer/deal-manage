@@ -15,6 +15,7 @@ import httpx
 import yaml
 
 from .local_ollama import load_ollama_settings
+from .publish_attachments import save_publish_attachments
 from .publish_prompts import build_publish_polish_prompt
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -277,7 +278,13 @@ async def polish_content(
     }
 
 
-async def publish_binance_square(*, content: str, api_key: str, api_url: str) -> dict[str, Any]:
+async def publish_binance_square(
+    *,
+    content: str,
+    api_key: str,
+    api_url: str,
+    image_tokens: list[str] | None = None,
+) -> dict[str, Any]:
     text = (content or "").strip()
     if not text:
         raise ValueError("发布正文不能为空")
@@ -289,8 +296,13 @@ async def publish_binance_square(*, content: str, api_key: str, api_url: str) ->
         "Content-Type": "application/json",
         "clienttype": "binanceSkill",
     }
+    body: dict[str, Any] = {"bodyTextOnly": text}
+    tokens = [str(t).strip() for t in (image_tokens or []) if str(t).strip()]
+    if tokens:
+        body["imageTokens"] = tokens
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await client.post(api_url, headers=headers, json={"bodyTextOnly": text})
+        resp = await client.post(api_url, headers=headers, json=body)
     try:
         data = resp.json()
     except Exception:
@@ -319,6 +331,8 @@ async def publish_article(
     use_ai: bool = True,
     polished_override: dict[str, Any] | None = None,
     source: str | None = None,
+    images: list[str] | None = None,
+    image_tokens: list[str] | None = None,
 ) -> dict[str, Any]:
     platform = _platform_by_id(settings, platform_id)
     if not platform:
@@ -345,6 +359,10 @@ async def publish_article(
         publish_text = raw
 
     entry_id = str(uuid.uuid4())
+    attachments: list[dict[str, Any]] = []
+    if images:
+        attachments = await asyncio.to_thread(save_publish_attachments, entry_id, images)
+
     record: dict[str, Any] = {
         "id": entry_id,
         "platform": platform_id,
@@ -353,12 +371,21 @@ async def publish_article(
         "original_content": raw,
         "polished": polished,
         "published_content": publish_text,
+        "attachments": attachments,
+        "image_tokens": list(image_tokens or []),
         "post_id": "",
         "post_url": "",
         "error": None,
         "created_at": _now_iso(),
         "source": source or "api",
     }
+
+    warnings: list[str] = []
+    if attachments and not (image_tokens or []):
+        warnings.append(
+            f"已保存 {len(attachments)} 张附图到本地；币安广场 OpenAPI 若未返回图片，"
+            "可在接入 imageToken 上传后随正文一并发布。"
+        )
 
     method = str(platform.get("method") or "api")
     try:
@@ -369,6 +396,7 @@ async def publish_article(
                 content=publish_text,
                 api_key=str(platform.get("api_key") or ""),
                 api_url=str(platform.get("api_url") or BINANCE_ADD_URL),
+                image_tokens=image_tokens,
             )
             record["status"] = "published"
             record["post_id"] = result.get("post_id") or ""
@@ -385,6 +413,8 @@ async def publish_article(
     )
     if saved.get("status") == "failed":
         raise RuntimeError(str(saved.get("error") or "发布失败"))
+    if warnings:
+        saved["warnings"] = warnings
     return saved
 
 
