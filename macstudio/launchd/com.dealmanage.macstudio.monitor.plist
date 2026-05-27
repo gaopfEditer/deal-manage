@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  模板：复制到 ~/Library/LaunchAgents/ 后 load。
+  每 4 小时执行 mac_monitor.sh --append
+  安装脚本 install.sh 会自动生成并 load。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dealmanage.macstudio.monitor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/usr/local/bin/mac_monitor.sh</string>
+    <string>--append</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MACSTUDIO_LOG_FILE</key>
+    <string>/Users/SHARED/Library/Logs/macstudio/metrics.csv</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>14400</integer>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
