@@ -124,6 +124,8 @@ def load_ollama_settings() -> dict[str, Any]:
         "allowed_image_path_roots": [
             "/Users/maotouying/Downloads",
             "/tmp",
+            "/Users/maotouying/frontend/code/1.operations/auto-deal-eth/screenshots",
+            "/Volumes/RamDisk/app_screenshots",
         ],
     }
     if not path.exists():
