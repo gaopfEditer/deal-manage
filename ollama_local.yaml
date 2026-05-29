@@ -3,9 +3,9 @@
 base_url: "http://localhost:11434"
 generate_endpoint: "/api/generate"
 # 纯文本默认模型
-default_model: "gemma4:latest"
+default_model: "gemma4:26b"
 # 带图请求默认模型（与 default_model 一致时可多模态看图）
-vision_model: "gemma4:latest"
+vision_model: "gemma4:26b"
 # 未在请求体中指定 stream 时的默认值
 stream: false
 timeout_seconds: 300

@@ -117,8 +117,8 @@ def load_ollama_settings() -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "base_url": "http://localhost:11434",
         "generate_endpoint": "/api/generate",
-        "default_model": "gemma4:latest",
-        "vision_model": "gemma4:latest",
+        "default_model": "gemma4:26b",
+        "vision_model": "gemma4:26b",
         "stream": False,
         "timeout_seconds": 300,
         "allowed_image_path_roots": [

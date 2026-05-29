@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ollama 多模态看图示例（gemma4:latest）
+Ollama 多模态看图示例（gemma4:26b）
 
 复用项目 ollama_local.yaml 与 prepare_ollama_generate_payload 的同等逻辑，
 直接 POST Ollama /api/generate，或经 deal-manage 的 /ollama/chat。
@@ -11,7 +11,7 @@ Ollama 多模态看图示例（gemma4:latest）
   python tmp/ollama_read_img_demo.py --image tmp/img.png --prompt "补充说明"
 
 前置：本机 Ollama 已启动，且已拉取视觉模型，例如：
-  ollama pull gemma4:latest
+  ollama pull gemma4:26b
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ def _load_settings() -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "base_url": "http://localhost:11434",
         "generate_endpoint": "/api/generate",
-        "default_model": "gemma4:latest",
-        "vision_model": "gemma4:latest",
+        "default_model": "gemma4:26b",
+        "vision_model": "gemma4:26b",
         "stream": False,
         "timeout_seconds": 300,
     }
