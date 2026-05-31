@@ -37,7 +37,7 @@ projects:
         telegram_chat: binance_square
         schedule:
           mode: interval
-          seconds: 1800
+          seconds: 5322
 
   - id: python-ai-operate
     name: Auto Deal ETH
@@ -52,7 +52,7 @@ projects:
         telegram_chat: trendradar
         schedule:
           mode: interval
-          seconds: 3222
+          seconds: 3333
       - id: create
         name: Create
         icon: "🛰"
