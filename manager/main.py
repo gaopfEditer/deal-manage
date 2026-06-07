@@ -348,10 +348,31 @@ async def run_search(script_id: str, payload: SearchPayload):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/api/scripts/{script_id}/pause")
+async def pause_script(script_id: str):
+    """仅终止当前运行，不关闭定时调度。"""
+    try:
+        data = await app.state.scheduler.pause(script_id)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/scripts/{script_id}/stop")
 async def stop_script(script_id: str):
+    """停止调度直至 POST /enable；若正在运行则先终止。"""
     try:
-        data = await app.state.scheduler.stop(script_id)
+        data = await app.state.scheduler.disable_schedule(script_id)
+        return {"ok": True, "item": data}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/scripts/{script_id}/enable")
+async def enable_script(script_id: str):
+    """恢复定时与手动触发。"""
+    try:
+        data = await app.state.scheduler.enable_schedule(script_id)
         return {"ok": True, "item": data}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

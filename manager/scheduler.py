@@ -27,6 +27,7 @@ from .telegram_service import (
 @dataclass
 class ScriptRuntime:
     status: str = "online"  # online | running | error
+    schedule_enabled: bool = True  # False = 停止调度，直至开启
     last_run_time: str | None = None
     last_exit_code: int | None = None
     last_error: str | None = None
@@ -62,6 +63,7 @@ class ScriptScheduler:
                     "name": script_cfg.get("name", script_id),
                     "icon": script_cfg.get("icon", "📄"),
                     "status": runtime.status,
+                    "schedule_enabled": runtime.schedule_enabled,
                     "last_run_time": runtime.last_run_time,
                     "last_exit_code": runtime.last_exit_code,
                     "last_error": runtime.last_error,
@@ -143,11 +145,19 @@ class ScriptScheduler:
     async def _interval_runner(self, script_id: str, seconds: int) -> None:
         while True:
             await asyncio.sleep(seconds)
+            if not self._runtime[script_id].schedule_enabled:
+                continue
             await self.trigger(script_id, "interval")
 
     async def trigger(self, script_id: str, action: str, keyword: str | None = None) -> None:
         if script_id not in self._scripts:
             raise KeyError(f"Script '{script_id}' not found")
+        runtime = self._runtime[script_id]
+        if not runtime.schedule_enabled:
+            await runtime.log_queue.put(
+                f"[{self._now()}] Script schedule disabled, skip action={action!r}"
+            )
+            return
         async with self._lock:
             runtime = self._runtime[script_id]
             if runtime.task and not runtime.task.done():
@@ -166,38 +176,112 @@ class ScriptScheduler:
             )
             runtime.task = asyncio.create_task(self._run_subprocess(script_id, action, keyword))
 
-    async def stop(self, script_id: str) -> dict[str, Any]:
+    async def pause(self, script_id: str) -> dict[str, Any]:
+        """暂停：仅终止当前这一次运行，定时/手动触发仍可用。"""
         if script_id not in self._scripts:
             raise KeyError(f"Script '{script_id}' not found")
         runtime = self._runtime[script_id]
+        await runtime.log_queue.put(f"[{self._now()}] Pause: halt current run only.")
+        out = await self._halt_current_run(script_id)
+        out["schedule_enabled"] = runtime.schedule_enabled
+        return out
+
+    async def disable_schedule(self, script_id: str) -> dict[str, Any]:
+        """停止：关闭调度直至开启；若正在运行则先终止当前任务。"""
+        if script_id not in self._scripts:
+            raise KeyError(f"Script '{script_id}' not found")
+        runtime = self._runtime[script_id]
+        runtime.schedule_enabled = False
+        await runtime.log_queue.put(
+            f"[{self._now()}] Schedule disabled until enabled (开启)."
+        )
+        out = await self._halt_current_run(script_id)
+        out["schedule_enabled"] = False
+        return out
+
+    async def enable_schedule(self, script_id: str) -> dict[str, Any]:
+        """开启：恢复定时与手动触发。"""
+        if script_id not in self._scripts:
+            raise KeyError(f"Script '{script_id}' not found")
+        runtime = self._runtime[script_id]
+        runtime.schedule_enabled = True
+        if runtime.status == "running" and (
+            runtime.process is None or runtime.process.poll() is not None
+        ):
+            runtime.status = "online"
+        await runtime.log_queue.put(f"[{self._now()}] Schedule enabled.")
+        return {
+            "script_id": script_id,
+            "schedule_enabled": True,
+            "status": runtime.status,
+        }
+
+    async def stop(self, script_id: str) -> dict[str, Any]:
+        """兼容旧接口：等同 disable_schedule（停止直至开启）。"""
+        return await self.disable_schedule(script_id)
+
+    async def _halt_current_run(self, script_id: str) -> dict[str, Any]:
+        runtime = self._runtime[script_id]
+        halted_proc = False
+        exit_code: int | None = None
+        cancelled_task = False
+
         proc = runtime.process
-        if not proc or proc.poll() is not None:
-            await runtime.log_queue.put(f"[{self._now()}] No running process to stop.")
-            return {"script_id": script_id, "stopped": False, "message": "not running"}
-
-        await runtime.log_queue.put(f"[{self._now()}] Stopping process pid={proc.pid} ...")
-        if os.name == "nt":
-            proc.terminate()
-        else:
-            # macOS/Linux: terminate process group to avoid orphan children.
-            os.killpg(proc.pid, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=5)
-        except asyncio.TimeoutError:
-            await runtime.log_queue.put(
-                f"[{self._now()}] Terminate timeout, force kill pid={proc.pid}"
-            )
+        if proc and proc.poll() is None:
+            await runtime.log_queue.put(f"[{self._now()}] Stopping process pid={proc.pid} ...")
             if os.name == "nt":
-                proc.kill()
+                proc.terminate()
             else:
-                os.killpg(proc.pid, signal.SIGKILL)
-            await asyncio.to_thread(proc.wait)
+                os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                await asyncio.wait_for(asyncio.to_thread(proc.wait), timeout=5)
+            except asyncio.TimeoutError:
+                await runtime.log_queue.put(
+                    f"[{self._now()}] Terminate timeout, force kill pid={proc.pid}"
+                )
+                if os.name == "nt":
+                    proc.kill()
+                else:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                await asyncio.to_thread(proc.wait)
+            exit_code = proc.returncode
+            runtime.last_exit_code = exit_code
+            runtime.process = None
+            halted_proc = True
+            await runtime.log_queue.put(
+                f"[{self._now()}] Process stopped, exit={exit_code}"
+            )
 
-        runtime.status = "online"
-        runtime.last_exit_code = proc.returncode
-        runtime.process = None
-        await runtime.log_queue.put(f"[{self._now()}] Process stopped, exit={proc.returncode}")
-        return {"script_id": script_id, "stopped": True, "exit_code": proc.returncode}
+        task = runtime.task
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            cancelled_task = True
+            runtime.task = None
+            if runtime.status == "running":
+                runtime.status = "online"
+            await runtime.log_queue.put(f"[{self._now()}] Run task cancelled.")
+
+        if not halted_proc and not cancelled_task:
+            await runtime.log_queue.put(f"[{self._now()}] No active run to halt.")
+            return {
+                "script_id": script_id,
+                "halted": False,
+                "message": "not running",
+            }
+
+        if runtime.status == "running":
+            runtime.status = "online"
+        return {
+            "script_id": script_id,
+            "halted": True,
+            "halted_process": halted_proc,
+            "cancelled_task": cancelled_task,
+            "exit_code": exit_code,
+        }
 
     async def clear_logs(self, script_id: str) -> dict[str, Any]:
         if script_id not in self._runtime:
@@ -301,6 +385,11 @@ class ScriptScheduler:
                 exit_code=exit_code,
                 stdout_text=stdout_text,
             )
+        except asyncio.CancelledError:
+            if runtime.status == "running":
+                runtime.status = "online"
+            await runtime.log_queue.put(f"[{self._now()}] Run cancelled (pause/stop).")
+            raise
         except Exception as exc:  # noqa: BLE001
             runtime.status = "error"
             err_text = f"{type(exc).__name__}: {exc!r}"
@@ -311,6 +400,8 @@ class ScriptScheduler:
             )
         finally:
             runtime.process = None
+            if runtime.task and runtime.task.done():
+                runtime.task = None
 
     async def _wait_for_cdp(self, runtime: ScriptRuntime, script_cfg: dict[str, Any]) -> None:
         # 脚本级 cdp_host / cdp_port 优先（与「一 user-data-dir + 一调试端口」多实例对应）

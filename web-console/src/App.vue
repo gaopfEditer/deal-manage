@@ -14,7 +14,7 @@
                 <span>{{ item.icon }}</span>
                 <span>{{ item.name }}</span>
               </div>
-              <el-tag :type="statusType(item.status)">{{ statusText(item.status) }}</el-tag>
+              <el-tag :type="statusType(item)">{{ statusText(item) }}</el-tag>
             </div>
             <div class="meta">上次运行: {{ item.last_run_time || "-" }}</div>
             <div class="meta">上次退出码: {{ item.last_exit_code ?? "-" }}</div>
@@ -27,14 +27,38 @@
               </el-button>
             </div>
             <div class="actions">
-              <el-button size="small" type="primary" @click="runFetch(item)">立即执行</el-button>
               <el-button
                 size="small"
-                type="danger"
+                type="primary"
+                :disabled="item.schedule_enabled === false"
+                @click="runFetch(item)"
+              >
+                立即执行
+              </el-button>
+              <el-button
+                v-if="item.schedule_enabled !== false"
+                size="small"
+                type="warning"
                 :disabled="item.status !== 'running'"
+                @click="pauseTask(item)"
+              >
+                暂停
+              </el-button>
+              <el-button
+                v-if="item.schedule_enabled !== false"
+                size="small"
+                type="danger"
                 @click="stopTask(item)"
               >
                 停止
+              </el-button>
+              <el-button
+                v-else
+                size="small"
+                type="success"
+                @click="enableTask(item)"
+              >
+                开启
               </el-button>
               <el-button size="small" @click="openSearch(item)">搜索</el-button>
               <el-button size="small" type="info" @click="openDrawer(item)">实时控制台</el-button>
@@ -1264,14 +1288,16 @@ function draftKey(scriptId) {
   return `memo_draft:${scriptId}`;
 }
 
-function statusText(status) {
+function statusText(item) {
+  if (item?.schedule_enabled === false) return "已停止";
   const m = { online: "在线", running: "运行中", error: "异常" };
-  return m[status] || status;
+  return m[item?.status] || item?.status || "-";
 }
 
-function statusType(status) {
+function statusType(item) {
+  if (item?.schedule_enabled === false) return "info";
   const m = { online: "success", running: "warning", error: "danger" };
-  return m[status] || "info";
+  return m[item?.status] || "info";
 }
 
 function formatResult(result) {
@@ -1633,10 +1659,54 @@ async function waitScriptDone(scriptId, timeoutSeconds = 1800) {
   return false;
 }
 
-async function stopTask(item) {
-  await fetch(`/api/scripts/${item.id}/stop`, { method: "POST" });
+async function pauseTask(item) {
+  const res = await fetch(`/api/scripts/${item.id}/pause`, { method: "POST" });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    ElMessage.error(data?.detail || "暂停失败");
+  } else {
+    ElMessage.success("已暂停本次运行");
+  }
   openDrawer(item);
-  loadCards();
+  await loadCards();
+}
+
+async function stopTask(item) {
+  const res = await fetch(`/api/scripts/${item.id}/stop`, { method: "POST" });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    ElMessage.error(data?.detail || "停止失败");
+  } else {
+    ElMessage.success("已停止，点击「开启」后恢复调度");
+  }
+  openDrawer(item);
+  await loadCards();
+}
+
+async function enableTask(item) {
+  const res = await fetch(`/api/scripts/${item.id}/enable`, { method: "POST" });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    ElMessage.error(data?.detail || "开启失败");
+  } else {
+    ElMessage.success("已开启调度");
+  }
+  await loadCards();
 }
 
 function openSearch(item) {
