@@ -19,6 +19,7 @@ from .upstream_proxy import router as upstream_router
 from .local_ollama import router as local_ollama_router
 from .publish_router import router as publish_router
 from .telegram_router import router as telegram_router
+from .task_planner_router import router as task_planner_router
 from .cdp_control import kill_and_start_chrome
 from .data_views_service import (
     DataViewsBrowseStore,
@@ -184,6 +185,7 @@ app.include_router(upstream_router)
 app.include_router(local_ollama_router)
 app.include_router(publish_router)
 app.include_router(telegram_router)
+app.include_router(task_planner_router)
 app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 

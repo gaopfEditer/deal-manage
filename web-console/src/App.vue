@@ -395,6 +395,129 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <el-tab-pane label="任务规划" name="task-planner">
+        <div class="task-planner-layout">
+          <div class="task-planner-side">
+            <div class="task-planner-side-head">
+              <span class="task-planner-side-title">规划历史</span>
+              <el-button size="small" type="primary" @click="newTaskPlannerSession">新建</el-button>
+            </div>
+            <el-button
+              size="small"
+              text
+              :loading="taskPlannerHistoryLoading"
+              @click="loadTaskPlannerSessions"
+            >
+              刷新
+            </el-button>
+            <div v-loading="taskPlannerHistoryLoading" class="task-planner-history">
+              <el-empty v-if="!taskPlannerSessions.length" description="暂无会话，输入描述开始" />
+              <el-card
+                v-for="s in taskPlannerSessions"
+                :key="s.id"
+                class="task-planner-history-item"
+                :class="{ active: s.id === taskPlannerSessionId }"
+                shadow="hover"
+                @click="openTaskPlannerSession(s.id)"
+              >
+                <div class="task-planner-history-head">
+                  <el-tag :type="s.status === 'COMPLETED' ? 'success' : 'warning'" size="small">
+                    {{ s.status === "COMPLETED" ? "已完成" : "对齐中" }}
+                  </el-tag>
+                  <span class="task-planner-history-time">{{ s.updated_at || s.created_at }}</span>
+                </div>
+                <div class="task-planner-history-title">{{ s.title }}</div>
+                <div class="task-planner-history-meta">追问 {{ s.turn_count ?? 0 }} 轮</div>
+              </el-card>
+            </div>
+          </div>
+
+          <div class="task-planner-main">
+            <div class="task-planner-toolbar">
+              <el-tag v-if="taskPlannerSessionId" type="info" size="small">
+                第 {{ taskPlannerTurnCount }} / {{ taskPlannerMaxTurns }} 轮
+              </el-tag>
+              <el-tag v-if="taskPlannerAlignment === 'sufficient'" type="success" size="small">
+                要素已充分
+              </el-tag>
+              <el-button
+                v-if="taskPlannerSessionId && taskPlannerStatus !== 'COMPLETED'"
+                size="small"
+                type="success"
+                :loading="taskPlannerLoading"
+                @click="forceCompleteTaskPlanner"
+              >
+                直接生成任务书
+              </el-button>
+            </div>
+
+            <div ref="taskPlannerChatEl" class="task-planner-chat">
+              <el-empty
+                v-if="!taskPlannerMessages.length"
+                description="用一句话描述你想做的任务，本地模型会追问细节并对齐要素"
+              />
+              <div
+                v-for="(m, idx) in taskPlannerMessages"
+                :key="`${idx}-${m.time || idx}`"
+                class="task-planner-msg"
+                :class="m.role === 'user' ? 'is-user' : 'is-assistant'"
+              >
+                <div class="task-planner-msg-role">{{ m.role === "user" ? "你" : "助手" }}</div>
+                <div class="task-planner-msg-body">{{ m.content }}</div>
+                <div v-if="m.time" class="task-planner-msg-time">{{ m.time }}</div>
+              </div>
+            </div>
+
+            <div class="task-planner-input">
+              <el-input
+                v-model="taskPlannerInput"
+                type="textarea"
+                :rows="3"
+                :disabled="taskPlannerLoading || taskPlannerStatus === 'COMPLETED'"
+                placeholder="描述任务或回答追问…"
+                maxlength="8000"
+                show-word-limit
+                @keydown.ctrl.enter.prevent="sendTaskPlannerMessage"
+              />
+              <div class="task-planner-input-actions">
+                <span class="task-planner-hint">Ctrl+Enter 发送</span>
+                <el-button
+                  type="primary"
+                  :loading="taskPlannerLoading"
+                  :disabled="!taskPlannerInput.trim() && !!taskPlannerSessionId"
+                  @click="sendTaskPlannerMessage"
+                >
+                  {{ taskPlannerSessionId ? "回复" : "开始规划" }}
+                </el-button>
+              </div>
+            </div>
+          </div>
+
+          <div class="task-planner-schema">
+            <div class="task-planner-side-title">当前要素</div>
+            <el-descriptions :column="1" border size="small" class="task-planner-desc">
+              <el-descriptions-item
+                v-for="key in taskPlannerSchemaKeys"
+                :key="key"
+                :label="taskPlannerFieldLabels[key] || key"
+              >
+                <span :class="{ 'task-planner-empty': !taskPlannerSchema[key] }">
+                  {{ taskPlannerSchema[key] || "（待补充）" }}
+                </span>
+              </el-descriptions-item>
+            </el-descriptions>
+            <div v-if="taskPlannerEmptyFields.length" class="task-planner-missing">
+              待对齐：{{ taskPlannerEmptyFields.map((k) => taskPlannerFieldLabels[k] || k).join("、") }}
+            </div>
+
+            <el-card v-if="taskPlannerFinalSpec" shadow="never" class="task-planner-spec-card">
+              <template #header>任务执行细则</template>
+              <pre class="task-planner-spec">{{ taskPlannerFinalSpec }}</pre>
+            </el-card>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog
@@ -796,6 +919,31 @@ const publishAttachMax = 9;
 const publishAttachments = ref([]);
 const publishImageTokensText = ref("");
 
+const taskPlannerSessions = ref([]);
+const taskPlannerHistoryLoading = ref(false);
+const taskPlannerSessionId = ref("");
+const taskPlannerStatus = ref("IN_PROGRESS");
+const taskPlannerTurnCount = ref(0);
+const taskPlannerMaxTurns = ref(5);
+const taskPlannerAlignment = ref("incomplete");
+const taskPlannerMessages = ref([]);
+const taskPlannerSchema = ref({});
+const taskPlannerFieldLabels = ref({});
+const taskPlannerSchemaKeys = ref([
+  "goal",
+  "tech_stack",
+  "data_protocol",
+  "core_logic",
+  "performance_deadline",
+  "deliverables",
+  "acceptance_criteria",
+]);
+const taskPlannerEmptyFields = ref([]);
+const taskPlannerFinalSpec = ref("");
+const taskPlannerInput = ref("");
+const taskPlannerLoading = ref(false);
+const taskPlannerChatEl = ref(null);
+
 const publishRouterHint = computed(() => {
   const r = publishRouterMeta.value;
   if (r?.description) return r.description;
@@ -848,6 +996,138 @@ function publishImageTokensPayload() {
     .split(/[,，\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function applyTaskPlannerSession(data) {
+  if (!data) return;
+  taskPlannerSessionId.value = data.id || "";
+  taskPlannerStatus.value = data.status || "IN_PROGRESS";
+  taskPlannerTurnCount.value = data.turn_count ?? 0;
+  taskPlannerMaxTurns.value = data.max_turns ?? 5;
+  taskPlannerAlignment.value = data.alignment_status || "incomplete";
+  taskPlannerMessages.value = Array.isArray(data.messages) ? data.messages : [];
+  taskPlannerSchema.value = data.current_schema || {};
+  taskPlannerFieldLabels.value = data.field_labels || {};
+  if (data.field_labels) {
+    taskPlannerSchemaKeys.value = Object.keys(data.field_labels);
+  }
+  taskPlannerEmptyFields.value = Array.isArray(data.empty_fields) ? data.empty_fields : [];
+  taskPlannerFinalSpec.value = data.final_spec || "";
+  nextTick(() => {
+    const el = taskPlannerChatEl.value;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+}
+
+async function loadTaskPlannerSessions() {
+  taskPlannerHistoryLoading.value = true;
+  try {
+    const res = await fetch("/api/task-planner/sessions");
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    taskPlannerSessions.value = data.items || [];
+  } catch (e) {
+    ElMessage.error(`加载规划历史失败: ${e.message || e}`);
+  } finally {
+    taskPlannerHistoryLoading.value = false;
+  }
+}
+
+function newTaskPlannerSession() {
+  taskPlannerSessionId.value = "";
+  taskPlannerStatus.value = "IN_PROGRESS";
+  taskPlannerTurnCount.value = 0;
+  taskPlannerAlignment.value = "incomplete";
+  taskPlannerMessages.value = [];
+  taskPlannerSchema.value = {};
+  taskPlannerEmptyFields.value = [];
+  taskPlannerFinalSpec.value = "";
+  taskPlannerInput.value = "";
+}
+
+async function openTaskPlannerSession(id) {
+  try {
+    const res = await fetch(`/api/task-planner/sessions/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    applyTaskPlannerSession(data);
+  } catch (e) {
+    ElMessage.error(`打开会话失败: ${e.message || e}`);
+  }
+}
+
+async function sendTaskPlannerMessage() {
+  const text = taskPlannerInput.value.trim();
+  if (!text) {
+    ElMessage.warning("请输入内容");
+    return;
+  }
+  if (taskPlannerLoading.value) return;
+  taskPlannerLoading.value = true;
+  try {
+    let res;
+    if (!taskPlannerSessionId.value) {
+      res = await fetch("/api/task-planner/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initial_input: text }),
+      });
+    } else {
+      res = await fetch(
+        `/api/task-planner/sessions/${encodeURIComponent(taskPlannerSessionId.value)}/chat`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_input: text }),
+        }
+      );
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    applyTaskPlannerSession(data);
+    taskPlannerInput.value = "";
+    await loadTaskPlannerSessions();
+    if (data.status === "COMPLETED") {
+      ElMessage.success("任务书已生成");
+    }
+  } catch (e) {
+    ElMessage.error(`任务规划失败: ${e.message || e}`);
+  } finally {
+    taskPlannerLoading.value = false;
+  }
+}
+
+async function forceCompleteTaskPlanner() {
+  if (!taskPlannerSessionId.value || taskPlannerLoading.value) return;
+  try {
+    await ElMessageBox.confirm(
+      "将基于当前已对齐要素直接生成任务书（未填项由模型合理补全），是否继续？",
+      "生成任务书",
+      { type: "info" }
+    );
+  } catch {
+    return;
+  }
+  taskPlannerLoading.value = true;
+  try {
+    const res = await fetch(
+      `/api/task-planner/sessions/${encodeURIComponent(taskPlannerSessionId.value)}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_input: "请基于当前要素生成任务书。", force_complete: true }),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    applyTaskPlannerSession(data);
+    await loadTaskPlannerSessions();
+    ElMessage.success("任务书已生成");
+  } catch (e) {
+    ElMessage.error(`生成失败: ${e.message || e}`);
+  } finally {
+    taskPlannerLoading.value = false;
+  }
 }
 
 function onPublishImageSelected(uploadFile) {
@@ -1833,6 +2113,9 @@ watch(mainTab, (tab) => {
     loadPublishPrompts();
     loadPublishHistory();
   }
+  if (tab === "task-planner") {
+    loadTaskPlannerSessions();
+  }
 });
 
 watch(publishPlatform, () => {
@@ -2267,6 +2550,153 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.task-planner-layout {
+  display: grid;
+  grid-template-columns: min(240px, 22vw) 1fr min(300px, 28vw);
+  gap: 14px;
+  align-items: start;
+  min-height: 62vh;
+}
+@media (max-width: 1100px) {
+  .task-planner-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.task-planner-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.task-planner-side-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.task-planner-history {
+  margin-top: 8px;
+  max-height: 68vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.task-planner-history-item {
+  cursor: pointer;
+  border-radius: 8px;
+}
+.task-planner-history-item.active {
+  border-color: var(--el-color-primary);
+}
+.task-planner-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.task-planner-history-time {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+.task-planner-history-title {
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+.task-planner-history-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
+.task-planner-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.task-planner-chat {
+  min-height: 320px;
+  max-height: 52vh;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--el-fill-color-blank);
+  margin-bottom: 12px;
+}
+.task-planner-msg {
+  margin-bottom: 12px;
+  max-width: 92%;
+}
+.task-planner-msg.is-user {
+  margin-left: auto;
+  text-align: right;
+}
+.task-planner-msg-role {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 4px;
+}
+.task-planner-msg-body {
+  display: inline-block;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+}
+.task-planner-msg.is-user .task-planner-msg-body {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-text-color-primary);
+}
+.task-planner-msg.is-assistant .task-planner-msg-body {
+  background: var(--el-fill-color-light);
+}
+.task-planner-msg-time {
+  font-size: 10px;
+  color: var(--el-text-color-placeholder);
+  margin-top: 4px;
+}
+.task-planner-input-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+}
+.task-planner-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.task-planner-desc {
+  margin-top: 8px;
+}
+.task-planner-empty {
+  color: var(--el-text-color-placeholder);
+  font-style: italic;
+}
+.task-planner-missing {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+}
+.task-planner-spec-card {
+  margin-top: 12px;
+}
+.task-planner-spec {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .publish-toolbar {
   display: flex;
   flex-wrap: wrap;

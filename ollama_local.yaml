@@ -10,6 +10,10 @@ vision_model: "gemma4:26b"
 stream: false
 timeout_seconds: 300
 
+# 任务规划 Tab（/api/task-planner）
+task_planner_model: "qwen2.5-coder:7b"
+task_planner_max_turns: 5
+
 # 使用 JSON/form 的 image_path / image_paths 读本地文件时，解析后的路径必须落在下列目录之一（绝对路径，可含 ~）。
 # 留空或不写则仅允许「本仓库根目录」下的文件。
 # 示例（截图常放在桌面）：
