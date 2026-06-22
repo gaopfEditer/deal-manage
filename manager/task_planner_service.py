@@ -1,6 +1,9 @@
 """
 本地 Ollama 任务规划：要素对齐 → 定向追问 → 生成执行细则。
 
+调用链：httpx POST {base_url}/api/chat（默认 http://localhost:11434，模型 gemma4:26b，
+见 ollama_local.yaml 的 task_planner_model / default_model）。
+
 会话持久化到 manager/state/task_planner.json，不依赖长对话历史，
 每次仅用【当前要素表】+【用户最新回答】做增量对齐。
 """
@@ -15,7 +18,6 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
-import yaml
 
 from .local_ollama import load_ollama_settings
 
@@ -80,24 +82,18 @@ def _now() -> str:
 
 
 def _planner_settings() -> dict[str, Any]:
+    """读取 ollama_local.yaml：base_url 默认 http://localhost:11434，模型默认 gemma4:26b。"""
     base = load_ollama_settings()
-    path = ROOT_DIR / "ollama_local.yaml"
-    extra: dict[str, Any] = {}
-    if path.is_file():
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if isinstance(data, dict):
-                extra = data
-        except Exception:
-            pass
-    model = str(extra.get("task_planner_model") or base.get("default_model") or "qwen2.5-coder:7b")
+    model = str(
+        base.get("task_planner_model") or base.get("default_model") or "gemma4:26b"
+    ).strip()
     try:
-        max_turns = int(extra.get("task_planner_max_turns", 5))
+        max_turns = int(base.get("task_planner_max_turns", 5))
     except (TypeError, ValueError):
         max_turns = 5
     return {
         **base,
-        "task_planner_model": model.strip(),
+        "task_planner_model": model,
         "task_planner_max_turns": max(2, min(max_turns, 12)),
     }
 
