@@ -17,17 +17,80 @@
 pip install -r requirements.txt
 ```
 
-### AI 接口（本仓库内实现，非转发）
+### 本地 Ollama（模型调用）
 
-直接调用 **Google Gemini**（Generative Language API）与 **通义千问**（DashScope OpenAI 兼容接口）。路径约定与常见网关类似：
+本仓库 AI 能力均 **直连本机 Ollama**（默认 `http://localhost:11434`），配置见项目根目录 **`ollama_local.yaml`**。可通过环境变量 **`OLLAMA_LOCAL_CONFIG`** 指向其它 YAML。
+
+| 配置项 | 说明 |
+|--------|------|
+| `base_url` | Ollama 地址，默认 `http://localhost:11434` |
+| `default_model` | 纯文本，默认 `gemma4:26b` |
+| `vision_model` | 带图请求，默认 `gemma4:26b` |
+| `timeout_seconds` | 代理请求超时（秒），大模型可适当加大 |
+| `allowed_image_path_roots` | 使用 `image_path` 时允许的本地目录白名单 |
+
+**前置：**
+
+```bash
+ollama pull gemma4:26b
+```
+
+#### 方式一：经 deal-manage 代理（推荐）
+
+后端需已启动（`uvicorn` 或 `python run.py`）。代理会把请求转发到 Ollama 的 **`/api/generate`**。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/gemini/chat` | JSON：`role`、`message`；或 `multipart`：`role`、`message`、`files` |
-| POST | `/gemini/image` | JSON：`prompt`，可选 `aspectRatio`、`referenceImages`（base64） |
-| POST | `/qwen/chat` | JSON：`messages`、`model`、`stream` |
+| POST | `/ollama/chat` | 文本；可选 `promat`、`role`、`model`；可选附图 `images` / `image_path` |
+| POST | `/ollama/chat-image` | 必须带图；JSON 或 multipart 上传 |
 
-环境变量请参考项目根目录 **`.env.example`**，复制为 `.env` 后按需填写（可用 `python-dotenv` 或系统环境变量注入）。
+有图时自动使用 `vision_model`；`promat=tv_k_line` 会前置 `prompts/tv_k_line.txt`。
+
+**纯文本：**
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:8000/ollama/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"用一句话介绍你自己","model":"gemma4:26b"}'
+```
+
+**带图 + 提示词模板：**
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:8000/ollama/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"promat":"tv_k_line","image_path":"/tmp/chart.png"}'
+```
+
+#### 方式二：直连 Ollama
+
+**单轮生成**（`/api/generate`）：
+
+```bash
+curl -sS -X POST 'http://localhost:11434/api/generate' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gemma4:26b","prompt":"你好","stream":false}'
+```
+
+**多轮对话**（`/api/chat`，部分模块内部使用）：
+
+```bash
+curl -sS -X POST 'http://localhost:11434/api/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gemma4:26b","messages":[{"role":"user","content":"你好"}],"stream":false}'
+```
+
+**看图**（`/api/generate` + `images` base64 数组）：
+
+```bash
+IMG_B64=$(base64 -i /tmp/chart.png | tr -d '\n')
+curl -sS -X POST 'http://localhost:11434/api/generate' \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg m 'gemma4:26b' --arg p '描述这张图' --arg img "$IMG_B64" \
+    '{model:$m,prompt:$p,stream:false,images:[$img]}')"
+```
+
+若超时或 502，先确认 Ollama 已运行（`curl -s http://localhost:11434/api/tags`），必要时增大 `timeout_seconds` 或先用 `ollama run gemma4:26b` 预热模型。
 
 ### Telegram 推送（统一 Bot + 外部发信）
 
