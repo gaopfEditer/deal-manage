@@ -37,7 +37,7 @@ projects:
         telegram_chat: binance_square
         schedule:
           mode: interval
-          seconds: 5322
+          seconds: 3322
 
   - id: python-ai-operate
     name: Auto Deal ETH
