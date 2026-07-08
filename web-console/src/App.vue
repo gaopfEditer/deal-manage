@@ -445,7 +445,10 @@
                 v-for="t in taskItems"
                 :key="t.id"
                 class="ts-task-card"
-                :class="{ done: t.status === 'done' }"
+                :class="{ done: t.status === 'done', recurring: t.recurrence || t.series_id || t._virtual }"
+                draggable="true"
+                @dragstart="onTaskDragStart(t, $event)"
+                @dragend="onTaskDragEnd"
               >
                 <label class="ts-task-check" @click.stop>
                   <input
@@ -456,8 +459,12 @@
                 </label>
                 <div class="ts-task-main" @click="openTaskDialog(t)">
                   <div class="ts-task-top">
-                    <span class="ts-task-time">{{ formatTaskTime(t.due_at) }}</span>
+                    <span class="ts-task-time">
+                      {{ formatTaskTime(t.due_at) }}
+                      <span v-if="taskRecurrenceLabel(t)" class="ts-recur-tag">{{ taskRecurrenceLabel(t) }}</span>
+                    </span>
                     <div class="ts-task-ops">
+                      <button type="button" class="ts-link" @click.stop="promptCopyTaskToDate(t)">复制</button>
                       <button type="button" class="ts-link" @click.stop="openTaskDialog(t)">编辑</button>
                       <button type="button" class="ts-link danger" @click.stop="deleteTaskItem(t)">删除</button>
                     </div>
@@ -469,7 +476,9 @@
             </div>
 
             <!-- 周：Timestripe 式七列 Horizons -->
-            <div v-else-if="taskView === 'week'" class="ts-week">
+            <div v-else-if="taskView === 'week'" class="ts-week-wrap">
+              <p class="ts-drag-hint">拖动任务到其他列可改期；按住 ⌘/Ctrl 拖动为复制</p>
+              <div class="ts-week">
               <div
                 v-for="col in taskWeekColumns"
                 :key="col.date"
@@ -480,12 +489,19 @@
                   <span class="ts-week-wd">{{ col.weekday }}</span>
                   <span class="ts-week-num" :class="{ ring: col.isToday }">{{ col.dayNum }}</span>
                 </button>
-                <div class="ts-week-stack">
+                <div
+                  class="ts-week-stack"
+                  @dragover="onTaskDragOver"
+                  @drop="onTaskDropToDate(col.date, $event)"
+                >
                   <div
                     v-for="t in tasksOnDate(col.date)"
                     :key="t.id"
                     class="ts-week-pill"
-                    :class="{ done: t.status === 'done' }"
+                    :class="{ done: t.status === 'done', recurring: t.recurrence || t.series_id || t._virtual }"
+                    draggable="true"
+                    @dragstart.stop="onTaskDragStart(t, $event)"
+                    @dragend="onTaskDragEnd"
                     @click="openTaskDialog(t)"
                   >
                     <input
@@ -496,14 +512,34 @@
                       @change="toggleTaskDone(t)"
                     />
                     <div class="ts-pill-text">
-                      <span class="ts-pill-time">{{ formatTaskTime(t.due_at) }}</span>
+                      <span class="ts-pill-time">
+                        {{ formatTaskTime(t.due_at) }}
+                        <span v-if="taskRecurrenceLabel(t)" class="ts-recur-dot" :title="taskRecurrenceLabel(t)">↻</span>
+                      </span>
                       <span class="ts-pill-title">{{ t.title }}</span>
                     </div>
+                    <button
+                      type="button"
+                      class="ts-pill-copy"
+                      title="复制到其他日期"
+                      @click.stop="promptCopyTaskToDate(t)"
+                    >
+                      ⧉
+                    </button>
+                    <button
+                      type="button"
+                      class="ts-pill-del"
+                      title="删除"
+                      @click.stop="deleteTaskItem(t)"
+                    >
+                      ×
+                    </button>
                   </div>
                   <button type="button" class="ts-week-add" @click="openTaskDialog(null, col.date)">
                     + 添加
                   </button>
                 </div>
+              </div>
               </div>
             </div>
 
@@ -579,7 +615,15 @@
       @closed="resetTaskForm"
     >
       <el-form label-width="88px">
-        <el-form-item label="标题">
+        <el-alert
+          v-if="taskEditingSeriesHint"
+          type="info"
+          :closable="false"
+          show-icon
+          class="ts-series-hint"
+          title="周期任务：保存将同步到所有重复日期；删除将移除整个系列。"
+        />
+        <el-form-item v-if="!taskFormBatchCreate || taskEditingId" label="标题">
           <el-input v-model="taskFormTitle" placeholder="可选；留空则取内容首行" maxlength="120" />
         </el-form-item>
         <el-form-item label="任务内容" required>
@@ -587,10 +631,36 @@
             v-model="taskFormContent"
             type="textarea"
             :rows="12"
-            placeholder="直接粘贴你反复思考后的任务说明（支持多行）"
+            :placeholder="
+              taskFormBatchCreate
+                ? '批量模式：每行一条任务，空行自动忽略'
+                : '直接粘贴你反复思考后的任务说明（支持多行）'
+            "
             maxlength="50000"
             show-word-limit
           />
+        </el-form-item>
+        <el-form-item v-if="!taskEditingId" label="">
+          <el-checkbox v-model="taskFormBatchCreate">批量创建（每行一条任务）</el-checkbox>
+        </el-form-item>
+        <el-form-item v-if="!taskFormBatchCreate" label="重复">
+          <el-select v-model="taskFormRecurrence" style="width: 100%">
+            <el-option
+              v-for="o in TASK_RECURRENCE_OPTIONS"
+              :key="o.value"
+              :label="o.label"
+              :value="o.value"
+            />
+          </el-select>
+          <el-checkbox-group
+            v-if="taskFormRecurrence === 'weekly'"
+            v-model="taskFormWeekdays"
+            class="ts-weekday-group"
+          >
+            <el-checkbox v-for="w in TASK_WEEKDAY_OPTIONS" :key="w.value" :label="w.value">
+              {{ w.label }}
+            </el-checkbox>
+          </el-checkbox-group>
         </el-form-item>
         <el-form-item label="截止时间" required>
           <el-date-picker
@@ -617,8 +687,14 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="taskDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="taskSaving" @click="saveTask">保存</el-button>
+        <div class="ts-task-dialog-footer">
+          <el-button v-if="taskEditingId" type="danger" plain @click="deleteTaskFromDialog">删除</el-button>
+          <div class="ts-task-dialog-footer-spacer" />
+          <el-button @click="taskDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="taskSaving" @click="saveTask">
+            {{ taskFormBatchCreate && !taskEditingId ? "批量保存" : "保存" }}
+          </el-button>
+        </div>
       </template>
     </el-dialog>
 
@@ -1036,13 +1112,33 @@ const taskStoreAll = ref([]);
 const taskLoading = ref(false);
 const taskDialogVisible = ref(false);
 const taskEditingId = ref("");
+const taskEditingSnapshot = ref(null);
 const taskFormTitle = ref("");
 const taskFormContent = ref("");
 const taskFormDue = ref("");
 const taskFormRemind = ref("");
+const taskFormBatchCreate = ref(false);
+const taskFormRecurrence = ref("none");
+const taskFormWeekdays = ref([1, 2, 3, 4, 5]);
 const taskRemindSame = ref(true);
 const taskSaving = ref(false);
 const taskDuePickerDefault = ref(new Date());
+const taskDragPayload = ref(null);
+const TASK_RECURRENCE_OPTIONS = [
+  { value: "none", label: "不重复" },
+  { value: "daily", label: "每天" },
+  { value: "weekdays", label: "工作日（周一至周五）" },
+  { value: "weekly", label: "每周（自选星期）" },
+];
+const TASK_WEEKDAY_OPTIONS = [
+  { value: 1, label: "周一" },
+  { value: 2, label: "周二" },
+  { value: 3, label: "周三" },
+  { value: 4, label: "周四" },
+  { value: 5, label: "周五" },
+  { value: 6, label: "周六" },
+  { value: 7, label: "周日" },
+];
 const taskWeekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
 const taskWeekdayLong = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const taskViewOptions = [
@@ -1226,15 +1322,382 @@ function computeTaskRange(anchorStr, view) {
   return { from: `${d.getFullYear()}-01-01`, to: `${d.getFullYear()}-12-31` };
 }
 
+function taskIsoWeekday(dateStr) {
+  const [y, mo, da] = String(dateStr).slice(0, 10).split("-").map(Number);
+  const d = new Date(y, mo - 1, da);
+  const js = d.getDay();
+  return js === 0 ? 7 : js;
+}
+
+function taskTimePart(iso) {
+  const s = normalizeDueAtForApi(iso);
+  if (!s || s.length < 11) return "09:00:00";
+  const part = s.slice(11);
+  return part.length === 5 ? `${part}:00` : part.slice(0, 8);
+}
+
+function taskCombineDateTime(dateStr, isoTimeSource) {
+  return `${dateStr} ${taskTimePart(isoTimeSource)}`;
+}
+
+function isRecurrenceMaster(t) {
+  const r = t?.recurrence;
+  if (!r || !r.freq || r.freq === "none") return false;
+  if (t.is_series_master) return true;
+  const sid = t.series_id || t.id;
+  return !t.series_id || t.series_id === t.id;
+}
+
+function repairTaskRecord(raw) {
+  const t = normalizeTaskRecord(raw);
+  if (!isRecurrenceMaster(t)) return t;
+  const id = t.id;
+  if (!id) return t;
+  return {
+    ...t,
+    is_series_master: true,
+    series_id: t.series_id || id,
+    recurrence_skip_dates: Array.isArray(t.recurrence_skip_dates) ? t.recurrence_skip_dates : [],
+  };
+}
+
+function normalizeTaskRecord(raw) {
+  const t = raw && typeof raw === "object" ? raw : {};
+  const recurrence = t.recurrence && typeof t.recurrence === "object" ? t.recurrence : null;
+  const freq = recurrence?.freq && recurrence.freq !== "none" ? recurrence.freq : "none";
+  const hasRecurrence = freq !== "none";
+  const merged = {
+    recurrence: null,
+    is_series_master: false,
+    series_id: null,
+    recurrence_skip_dates: [],
+    ...t,
+  };
+  const seriesId = merged.series_id || (hasRecurrence ? merged.id : null);
+  const isMaster =
+    !!merged.is_series_master ||
+    (hasRecurrence && seriesId && (!merged.series_id || merged.series_id === merged.id));
+  return {
+    ...merged,
+    recurrence: hasRecurrence
+      ? {
+          freq,
+          byweekday: Array.isArray(recurrence?.byweekday)
+            ? recurrence.byweekday.filter((n) => n >= 1 && n <= 7)
+            : [],
+        }
+      : null,
+    is_series_master: isMaster,
+    series_id: hasRecurrence ? seriesId : merged.series_id || null,
+    recurrence_skip_dates: Array.isArray(merged.recurrence_skip_dates)
+      ? merged.recurrence_skip_dates
+      : [],
+  };
+}
+
+function buildRecurrencePayload(freq, weekdays, anchorDate) {
+  if (!freq || freq === "none") return null;
+  if (freq === "daily" || freq === "weekdays") {
+    return { freq, byweekday: [] };
+  }
+  const days =
+    weekdays?.length > 0 ? [...weekdays].sort((a, b) => a - b) : [taskIsoWeekday(anchorDate)];
+  return { freq: "weekly", byweekday: days };
+}
+
+function dateMatchesRecurrence(dateStr, recurrence, anchorDateStr) {
+  if (!recurrence || recurrence.freq === "none") return false;
+  if (anchorDateStr && dateStr < anchorDateStr) return false;
+  const wd = taskIsoWeekday(dateStr);
+  if (recurrence.freq === "daily") return true;
+  if (recurrence.freq === "weekdays") return wd >= 1 && wd <= 5;
+  if (recurrence.freq === "weekly") {
+    const days =
+      recurrence.byweekday?.length > 0
+        ? recurrence.byweekday
+        : [taskIsoWeekday(anchorDateStr || dateStr)];
+    return days.includes(wd);
+  }
+  return false;
+}
+
+function taskSeriesMasters(tasks) {
+  return tasks.filter(isRecurrenceMaster);
+}
+
+function hasSeriesInstanceOnDate(tasks, seriesId, dateStr) {
+  return tasks.some(
+    (t) =>
+      !t.is_series_master &&
+      (t.series_id === seriesId || t.id === seriesId) &&
+      taskDueDateKey(t) === dateStr
+  );
+}
+
+function enumerateDates(from, to) {
+  const out = [];
+  const [y0, m0, d0] = from.split("-").map(Number);
+  const [y1, m1, d1] = to.split("-").map(Number);
+  const cur = new Date(y0, m0 - 1, d0);
+  const end = new Date(y1, m1 - 1, d1);
+  while (cur <= end) {
+    out.push(formatTaskDate(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
+function expandTasksInRange(tasks, from, to) {
+  const normalized = tasks.map(repairTaskRecord);
+  const stored = normalized.filter((t) => !isRecurrenceMaster(t));
+  const result = [];
+  for (const t of stored) {
+    const k = taskDueDateKey(t);
+    if (k && k >= from && k <= to) {
+      result.push({ ...t, _virtual: false });
+    }
+  }
+  for (const master of taskSeriesMasters(normalized)) {
+    const seriesId = master.series_id || master.id;
+    const anchor = taskDueDateKey(master);
+    const skips = new Set(master.recurrence_skip_dates || []);
+    for (const date of enumerateDates(from, to)) {
+      if (!dateMatchesRecurrence(date, master.recurrence, anchor)) continue;
+      if (skips.has(date)) continue;
+      if (hasSeriesInstanceOnDate(normalized, seriesId, date)) continue;
+      const dueAt = taskCombineDateTime(date, master.due_at);
+      result.push({
+        ...master,
+        id: `virt:${seriesId}:${date}`,
+        due_at: dueAt,
+        remind_at: taskCombineDateTime(date, master.remind_at || master.due_at),
+        status: "pending",
+        reminded: false,
+        reminded_at: null,
+        _virtual: true,
+        series_id: seriesId,
+        is_series_master: false,
+      });
+    }
+  }
+  return result.sort((a, b) => String(a.due_at || "").localeCompare(String(b.due_at || "")));
+}
+
+function taskRecurrenceLabel(task) {
+  const r = task?.recurrence || resolveSeriesMaster(task)?.recurrence;
+  if (!r || r.freq === "none") {
+    if (task?.series_id || task?._virtual) return "周期";
+    return "";
+  }
+  if (r.freq === "daily") return "每天";
+  if (r.freq === "weekdays") return "工作日";
+  if (r.freq === "weekly") {
+    const map = { 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日" };
+    const days = (r.byweekday?.length ? r.byweekday : [1]).map((d) => map[d] || d).join("、");
+    return `每周${days}`;
+  }
+  return "周期";
+}
+
+function isVirtualTask(task) {
+  return !!task?._virtual || String(task?.id || "").startsWith("virt:");
+}
+
+function seriesIdOf(task) {
+  if (!task) return null;
+  if (isVirtualTask(task)) {
+    const v = parseVirtualTaskId(task.id);
+    return v?.seriesId || task.series_id || null;
+  }
+  if (isRecurrenceMaster(task)) return task.id;
+  return task.series_id || null;
+}
+
+function isSeriesTask(task) {
+  const sid = seriesIdOf(task);
+  if (!sid) return false;
+  return !!resolveSeriesMaster({ series_id: sid, id: sid }) || isRecurrenceMaster(task);
+}
+
+function deleteSeriesById(seriesId) {
+  if (!seriesId) return;
+  patchTaskStore((list) => list.filter((t) => t.id !== seriesId && t.series_id !== seriesId));
+}
+
+function applySeriesUpdate(
+  seriesId,
+  { content, title, dueAt, remindAt, recurrence }
+) {
+  patchTaskStore((list) => {
+    const master = list.find((t) => t.id === seriesId && isRecurrenceMaster(t));
+    if (!master) return list;
+    const updated = repairTaskRecord(
+      buildTaskRecord({
+        content,
+        title,
+        dueAt,
+        remindAt,
+        existing: master,
+        recurrence,
+      })
+    );
+    updated.recurrence_skip_dates = [];
+    return list
+      .filter((t) => !(t.series_id === seriesId && t.id !== seriesId))
+      .map((t) => (t.id === seriesId ? updated : t));
+  });
+}
+
+function demoteSeriesToSingleTask(seriesId, { content, title, dueAt, remindAt }) {
+  patchTaskStore((list) => {
+    const master = list.find((t) => t.id === seriesId);
+    if (!master) return list.filter((t) => t.series_id !== seriesId);
+    const single = buildTaskRecord({
+      content,
+      title,
+      dueAt,
+      remindAt,
+      existing: master,
+      recurrence: null,
+    });
+    single.is_series_master = false;
+    single.series_id = null;
+    single.recurrence = null;
+    single.recurrence_skip_dates = [];
+    return list
+      .filter((t) => !(t.series_id === seriesId && t.id !== seriesId))
+      .map((t) => (t.id === seriesId ? single : t));
+  });
+}
+
+function resolveSeriesMaster(task) {
+  const sid = seriesIdOf(task) || task?.series_id || task?.id;
+  if (!sid) return null;
+  return taskStoreAll.value.find(
+    (t) => isRecurrenceMaster(t) && (t.id === sid || t.series_id === sid)
+  );
+}
+
+function addRecurrenceSkipDate(master, dateStr) {
+  if (!master || !dateStr) return master;
+  const skips = new Set(master.recurrence_skip_dates || []);
+  skips.add(dateStr);
+  return { ...master, recurrence_skip_dates: [...skips], updated_at: formatTaskDateTime(new Date()) };
+}
+
+function patchTaskStore(updater) {
+  const copy = [...taskStoreAll.value];
+  const next = updater(copy);
+  taskStoreAll.value = next;
+  persistTaskStore();
+}
+
+function updateTaskById(taskId, patch) {
+  patchTaskStore((list) =>
+    list.map((t) => (t.id === taskId ? { ...t, ...patch, updated_at: formatTaskDateTime(new Date()) } : t))
+  );
+}
+
+function materializeTaskOccurrence(task, targetDate, overrides = {}) {
+  const seriesId = task.series_id || resolveSeriesMaster(task)?.id;
+  const dueAt = taskCombineDateTime(targetDate, overrides.due_at || task.due_at);
+  const remindAt = taskCombineDateTime(
+    targetDate,
+    overrides.remind_at || task.remind_at || task.due_at
+  );
+  const created = buildTaskRecord({
+    content: overrides.content ?? task.content,
+    title: overrides.title ?? task.title,
+    dueAt,
+    remindAt,
+  });
+  created.series_id = seriesId || null;
+  created.is_series_master = false;
+  if (overrides.status) created.status = overrides.status;
+  taskStoreAll.value = [...taskStoreAll.value, created];
+  persistTaskStore();
+  return created;
+}
+
+function moveTaskToDate(task, targetDate) {
+  const srcDate = taskDueDateKey(task);
+  if (!targetDate || srcDate === targetDate) return;
+  if (isVirtualTask(task)) {
+    const master = resolveSeriesMaster(task);
+    if (master) {
+      patchTaskStore((list) =>
+        list.map((t) => (t.id === master.id ? addRecurrenceSkipDate(t, srcDate) : t))
+      );
+    }
+    materializeTaskOccurrence(task, targetDate);
+    ElMessage.success("已移到所选日期");
+    return;
+  }
+  const dueAt = taskCombineDateTime(targetDate, task.due_at);
+  const remindAt = taskCombineDateTime(targetDate, task.remind_at || task.due_at);
+  updateTaskById(task.id, { due_at: dueAt, remind_at: remindAt, reminded: false, reminded_at: null });
+  ElMessage.success("已移到所选日期");
+}
+
+function copyTaskToDate(task, targetDate) {
+  if (!targetDate) return;
+  materializeTaskOccurrence(task, targetDate);
+  ElMessage.success("已复制到所选日期");
+}
+
+async function promptCopyTaskToDate(task) {
+  const src = taskDueDateKey(task) || formatTaskDate(new Date());
+  try {
+    const { value } = await ElMessageBox.prompt("复制到日期（YYYY-MM-DD）", "复制任务", {
+      confirmButtonText: "复制",
+      cancelButtonText: "取消",
+      inputValue: src,
+      inputPattern: /^\d{4}-\d{2}-\d{2}$/,
+      inputErrorMessage: "请输入 YYYY-MM-DD",
+    });
+    copyTaskToDate(task, value.trim());
+    focusTaskOnCalendar(`${value.trim()} ${taskTimePart(task.due_at)}`);
+  } catch {
+    /* cancelled */
+  }
+}
+
+function onTaskDragStart(task, e) {
+  const copy = !!(e.altKey || e.metaKey || e.ctrlKey);
+  taskDragPayload.value = { task, copy };
+  e.dataTransfer.effectAllowed = copy ? "copy" : "move";
+  e.dataTransfer.setData("text/plain", task.id);
+}
+
+function onTaskDragEnd() {
+  taskDragPayload.value = null;
+}
+
+function onTaskDragOver(e) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = taskDragPayload.value?.copy ? "copy" : "move";
+}
+
+function onTaskDropToDate(targetDate, e) {
+  e.preventDefault();
+  const payload = taskDragPayload.value;
+  taskDragPayload.value = null;
+  if (!payload?.task || !targetDate) return;
+  if (payload.copy) copyTaskToDate(payload.task, targetDate);
+  else moveTaskToDate(payload.task, targetDate);
+  focusTaskOnCalendar(`${targetDate} ${taskTimePart(payload.task.due_at)}`);
+}
+
 function filterTasksForView(tasks, anchor, view) {
   const { from, to } = computeTaskRange(anchor, view);
-  return [...tasks]
-    .filter((t) => {
-      const k = taskDueDateKey(t);
-      return k && k >= from && k <= to;
-    })
-    .sort((a, b) => String(a.due_at || "").localeCompare(String(b.due_at || "")));
+  return expandTasksInRange(tasks, from, to);
 }
+
+const taskEditingSeriesHint = computed(() => {
+  const t = taskEditingSnapshot.value;
+  if (!t || !taskEditingId.value) return false;
+  return isSeriesTask(t);
+});
 
 const taskItems = computed(() =>
   filterTasksForView(taskStoreAll.value, taskAnchor.value, taskView.value)
@@ -1244,7 +1707,10 @@ function loadTaskStoreFromCache() {
   try {
     const raw = localStorage.getItem(TASK_STORE_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    taskStoreAll.value = Array.isArray(list) ? list : [];
+    const repaired = Array.isArray(list) ? list.map(repairTaskRecord) : [];
+    taskStoreAll.value = repaired;
+    const changed = JSON.stringify(list) !== JSON.stringify(repaired);
+    if (changed) persistTaskStore();
   } catch {
     taskStoreAll.value = [];
   }
@@ -1263,14 +1729,21 @@ function newTaskId() {
   return `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function buildTaskRecord({ content, title, dueAt, remindAt, existing }) {
+function buildTaskRecord({ content, title, dueAt, remindAt, existing, recurrence }) {
   const now = formatTaskDateTime(new Date());
   const body = content.trim();
   const due = normalizeDueAtForApi(dueAt);
   const remind = normalizeDueAtForApi(remindAt || dueAt);
   const autoTitle = body.split("\n")[0].trim().slice(0, 120) || "未命名任务";
+  const rec =
+    recurrence && recurrence.freq && recurrence.freq !== "none"
+      ? {
+          freq: recurrence.freq,
+          byweekday: Array.isArray(recurrence.byweekday) ? recurrence.byweekday : [],
+        }
+      : null;
   if (existing) {
-    return {
+    const next = {
       ...existing,
       title: (title || "").trim() || autoTitle,
       content: body,
@@ -1279,10 +1752,19 @@ function buildTaskRecord({ content, title, dueAt, remindAt, existing }) {
       reminded: false,
       reminded_at: null,
       updated_at: now,
+      recurrence: rec,
+      is_series_master: !!rec,
+      series_id: rec ? existing.series_id || existing.id : null,
     };
+    if (!rec) {
+      next.is_series_master = false;
+      next.series_id = existing.series_id || null;
+    }
+    return next;
   }
+  const id = newTaskId();
   return {
-    id: newTaskId(),
+    id,
     title: (title || "").trim() || autoTitle,
     content: body,
     due_at: due,
@@ -1292,6 +1774,10 @@ function buildTaskRecord({ content, title, dueAt, remindAt, existing }) {
     reminded_at: null,
     created_at: now,
     updated_at: now,
+    recurrence: rec,
+    is_series_master: !!rec,
+    series_id: rec ? id : null,
+    recurrence_skip_dates: [],
   };
 }
 
@@ -1505,15 +1991,26 @@ function drillTaskMonth(month) {
 
 function resetTaskForm() {
   taskEditingId.value = "";
+  taskEditingSnapshot.value = null;
   taskFormTitle.value = "";
   taskFormContent.value = "";
   taskFormDue.value = "";
   taskFormRemind.value = "";
+  taskFormBatchCreate.value = false;
+  taskFormRecurrence.value = "none";
+  taskFormWeekdays.value = [1, 2, 3, 4, 5];
   taskRemindSame.value = true;
+}
+
+function parseVirtualTaskId(id) {
+  const m = /^virt:([^:]+):(\d{4}-\d{2}-\d{2})$/.exec(String(id || ""));
+  if (!m) return null;
+  return { seriesId: m[1], date: m[2] };
 }
 
 function openTaskDialog(task, presetDate) {
   resetTaskForm();
+  taskEditingSnapshot.value = task || null;
   if (task) {
     taskEditingId.value = task.id;
     taskFormTitle.value = task.title || "";
@@ -1522,10 +2019,20 @@ function openTaskDialog(task, presetDate) {
     taskFormRemind.value = normalizeDueAtForApi(task.remind_at || "");
     taskRemindSame.value = !task.remind_at || task.remind_at === task.due_at;
     taskDuePickerDefault.value = parseLocalDateTime(taskFormDue.value);
+    const master = task.is_series_master ? task : resolveSeriesMaster(task);
+    const rec = master?.recurrence || task.recurrence;
+    if (rec?.freq && rec.freq !== "none") {
+      taskFormRecurrence.value = rec.freq === "weekly" ? "weekly" : rec.freq;
+      taskFormWeekdays.value =
+        rec.byweekday?.length > 0
+          ? [...rec.byweekday]
+          : [taskIsoWeekday(taskDueDateKey(task.due_at))];
+    }
   } else {
     const base = presetDate || taskAnchor.value || formatTaskDate(new Date());
     taskFormDue.value = defaultTaskDueDatetime(base);
     taskDuePickerDefault.value = parseLocalDateTime(taskFormDue.value);
+    taskFormWeekdays.value = [taskIsoWeekday(base)];
   }
   taskDialogVisible.value = true;
 }
@@ -1544,36 +2051,119 @@ async function saveTask() {
   const remindAt = taskRemindSame.value
     ? dueAt
     : normalizeDueAtForApi(taskFormRemind.value) || dueAt;
+  const anchorDate = taskDueDateKey(dueAt);
+  const recurrence = buildRecurrencePayload(
+    taskFormRecurrence.value,
+    taskFormWeekdays.value,
+    anchorDate
+  );
 
   taskSaving.value = true;
   try {
     let saved;
+    const virt = parseVirtualTaskId(taskEditingId.value);
+    const editingTask =
+      taskEditingSnapshot.value ||
+      (taskEditingId.value
+        ? taskStoreAll.value.find((t) => t.id === taskEditingId.value)
+        : null);
+    const editingSeriesId = virt?.seriesId || seriesIdOf(editingTask);
+    const seriesMaster = editingSeriesId
+      ? resolveSeriesMaster({ series_id: editingSeriesId, id: editingSeriesId })
+      : null;
+
+    if (seriesMaster && (virt || taskEditingId.value)) {
+      if (!recurrence) {
+        demoteSeriesToSingleTask(editingSeriesId, {
+          content,
+          title: taskFormTitle.value,
+          dueAt,
+          remindAt,
+        });
+        focusTaskOnCalendar(dueAt);
+        taskDialogVisible.value = false;
+        ElMessage.success("已改为单次任务");
+        return;
+      }
+      applySeriesUpdate(editingSeriesId, {
+        content,
+        title: taskFormTitle.value,
+        dueAt,
+        remindAt,
+        recurrence,
+      });
+      focusTaskOnCalendar(dueAt);
+      taskDialogVisible.value = false;
+      ElMessage.success("已同步到整个周期任务");
+      return;
+    }
+
     if (taskEditingId.value) {
       const idx = taskStoreAll.value.findIndex((t) => t.id === taskEditingId.value);
       if (idx < 0) throw new Error("任务不存在");
+      const existing = taskStoreAll.value[idx];
+      const applyRecurrence = existing.is_series_master || (!existing.series_id && recurrence);
       saved = buildTaskRecord({
         content,
         title: taskFormTitle.value,
         dueAt,
         remindAt,
-        existing: taskStoreAll.value[idx],
+        existing,
+        recurrence: applyRecurrence ? recurrence : null,
       });
+      if (existing.is_series_master && !recurrence) {
+        saved.is_series_master = false;
+        saved.series_id = null;
+        saved.recurrence_skip_dates = [];
+      }
       const copy = [...taskStoreAll.value];
       copy[idx] = saved;
       taskStoreAll.value = copy;
-    } else {
-      saved = buildTaskRecord({
-        content,
-        title: taskFormTitle.value,
-        dueAt,
-        remindAt,
-      });
-      taskStoreAll.value = [...taskStoreAll.value, saved];
+      persistTaskStore();
+      focusTaskOnCalendar(saved.due_at);
+      taskDialogVisible.value = false;
+      ElMessage.success("已保存到本地");
+      return;
     }
+
+    if (taskFormBatchCreate.value) {
+      const lines = splitBatchTaskLines(content);
+      if (!lines.length) {
+        ElMessage.warning("请至少填写一行任务内容");
+        return;
+      }
+      const created = lines.map((line) =>
+        buildTaskRecord({
+          content: line,
+          title: "",
+          dueAt,
+          remindAt,
+          recurrence,
+        })
+      );
+      taskStoreAll.value = [
+        ...taskStoreAll.value.map(repairTaskRecord),
+        ...created.map(repairTaskRecord),
+      ];
+      persistTaskStore();
+      focusTaskOnCalendar(created[0].due_at);
+      taskDialogVisible.value = false;
+      ElMessage.success(`已批量创建 ${created.length} 条任务`);
+      return;
+    }
+
+    saved = buildTaskRecord({
+      content,
+      title: taskFormTitle.value,
+      dueAt,
+      remindAt,
+      recurrence,
+    });
+    taskStoreAll.value = [...taskStoreAll.value.map(repairTaskRecord), repairTaskRecord(saved)];
     persistTaskStore();
     focusTaskOnCalendar(saved.due_at);
     taskDialogVisible.value = false;
-    ElMessage.success("已保存到本地");
+    ElMessage.success(recurrence ? "已创建周期任务" : "已保存到本地");
   } catch (e) {
     ElMessage.error(`保存失败: ${e.message || e}`);
   } finally {
@@ -1581,7 +2171,20 @@ async function saveTask() {
   }
 }
 
+function splitBatchTaskLines(text) {
+  return String(text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 async function toggleTaskDone(task) {
+  if (isVirtualTask(task)) {
+    const date = taskDueDateKey(task);
+    if (task.status === "done") return;
+    materializeTaskOccurrence(task, date, { status: "done" });
+    return;
+  }
   const idx = taskStoreAll.value.findIndex((t) => t.id === task.id);
   if (idx < 0) return;
   const next = task.status === "done" ? "pending" : "done";
@@ -1595,15 +2198,45 @@ async function toggleTaskDone(task) {
   persistTaskStore();
 }
 
+async function deleteTaskFromDialog() {
+  let task = taskEditingSnapshot.value;
+  if (!task && taskEditingId.value) {
+    const virt = parseVirtualTaskId(taskEditingId.value);
+    if (virt) {
+      task = {
+        id: taskEditingId.value,
+        _virtual: true,
+        series_id: virt.seriesId,
+        title: taskFormTitle.value || "任务",
+        due_at: taskFormDue.value,
+      };
+    } else {
+      task = taskStoreAll.value.find((t) => t.id === taskEditingId.value) || null;
+    }
+  }
+  if (!task) return;
+  await deleteTaskItem(task);
+  taskDialogVisible.value = false;
+}
+
 async function deleteTaskItem(task) {
+  const seriesId = seriesIdOf(task);
+  const inSeries = isSeriesTask(task);
+  const msg = inSeries
+    ? `删除整个周期任务「${task.title}」？所有重复日期上的安排将一并删除。`
+    : `删除任务「${task.title}」？`;
   try {
-    await ElMessageBox.confirm(`删除任务「${task.title}」？`, "确认", { type: "warning" });
+    await ElMessageBox.confirm(msg, "确认", { type: "warning" });
   } catch {
     return;
   }
-  taskStoreAll.value = taskStoreAll.value.filter((t) => t.id !== task.id);
-  persistTaskStore();
-  ElMessage.success("已删除");
+  if (inSeries && seriesId) {
+    deleteSeriesById(seriesId);
+  } else {
+    taskStoreAll.value = taskStoreAll.value.filter((t) => t.id !== task.id);
+    persistTaskStore();
+  }
+  ElMessage.success(inSeries ? "已删除整个周期任务" : "已删除");
 }
 
 function startTaskReminderPoll() {
@@ -3347,6 +3980,16 @@ html.dark .ts-cal {
 }
 
 /* Week horizons — signature Timestripe columns */
+.ts-week-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ts-drag-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ts-muted);
+}
 .ts-week {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -3425,6 +4068,7 @@ html.dark .ts-cal {
   flex-direction: column;
   gap: 6px;
   overflow-y: auto;
+  min-height: 100px;
 }
 .ts-week-pill {
   display: flex;
@@ -3434,8 +4078,76 @@ html.dark .ts-cal {
   border-radius: 10px;
   background: var(--ts-accent-soft);
   border-left: 3px solid var(--ts-accent);
-  cursor: pointer;
+  cursor: grab;
   transition: background 0.12s;
+}
+.ts-week-pill:active {
+  cursor: grabbing;
+}
+.ts-week-pill.recurring {
+  border-left-color: #3d8bfd;
+}
+.ts-pill-copy {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--ts-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.ts-pill-copy:hover {
+  opacity: 1;
+  color: var(--ts-accent);
+}
+.ts-pill-del {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--ts-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.ts-pill-del:hover {
+  opacity: 1;
+  color: #d14343;
+}
+.ts-recur-dot {
+  margin-left: 4px;
+  font-size: 10px;
+  color: #3d8bfd;
+}
+.ts-recur-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  color: #3d8bfd;
+  font-weight: 600;
+}
+.ts-series-hint {
+  margin-bottom: 12px;
+}
+.ts-task-dialog-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.ts-task-dialog-footer-spacer {
+  flex: 1;
+}
+.ts-weekday-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 10px;
+}
+.ts-task-card.recurring {
+  border-left: 3px solid #3d8bfd;
 }
 .ts-week-pill:hover {
   background: rgba(232, 100, 60, 0.18);
