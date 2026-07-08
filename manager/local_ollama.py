@@ -121,8 +121,6 @@ def load_ollama_settings() -> dict[str, Any]:
         "vision_model": "gemma4:26b",
         "stream": False,
         "timeout_seconds": 300,
-        "task_planner_model": "gemma4:26b",
-        "task_planner_max_turns": 5,
         "allowed_image_path_roots": [
             "/Users/maotouying/Downloads",
             "/tmp",
@@ -153,14 +151,6 @@ def load_ollama_settings() -> dict[str, Any]:
         merged["timeout_seconds"] = float(merged.get("timeout_seconds", 300))
     except (TypeError, ValueError):
         merged["timeout_seconds"] = 300.0
-    tpm = merged.get("task_planner_model")
-    merged["task_planner_model"] = (
-        str(tpm).strip() if tpm else str(merged.get("default_model") or defaults["task_planner_model"]).strip()
-    )
-    try:
-        merged["task_planner_max_turns"] = int(merged.get("task_planner_max_turns", 5))
-    except (TypeError, ValueError):
-        merged["task_planner_max_turns"] = 5
     air = merged.get("allowed_image_path_roots")
     if isinstance(air, list):
         merged["allowed_image_path_roots"] = air

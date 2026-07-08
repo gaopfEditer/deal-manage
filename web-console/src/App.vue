@@ -396,129 +396,231 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="任务规划" name="task-planner">
-        <div class="task-planner-layout">
-          <div class="task-planner-side">
-            <div class="task-planner-side-head">
-              <span class="task-planner-side-title">规划历史</span>
-              <el-button size="small" type="primary" @click="newTaskPlannerSession">新建</el-button>
+      <el-tab-pane label="任务" name="tasks">
+        <div class="ts-cal">
+          <header class="ts-cal-header">
+            <div class="ts-cal-nav">
+              <button type="button" class="ts-icon-btn" title="上一段" @click="taskNav(-1)">‹</button>
+              <button type="button" class="ts-today-btn" @click="taskNavToday">今天</button>
+              <button type="button" class="ts-icon-btn" title="下一段" @click="taskNav(1)">›</button>
             </div>
-            <el-button
-              size="small"
-              text
-              :loading="taskPlannerHistoryLoading"
-              @click="loadTaskPlannerSessions"
-            >
-              刷新
-            </el-button>
-            <div v-loading="taskPlannerHistoryLoading" class="task-planner-history">
-              <el-empty v-if="!taskPlannerSessions.length" description="暂无会话，输入描述开始" />
-              <el-card
-                v-for="s in taskPlannerSessions"
-                :key="s.id"
-                class="task-planner-history-item"
-                :class="{ active: s.id === taskPlannerSessionId }"
-                shadow="hover"
-                @click="openTaskPlannerSession(s.id)"
+            <h2 class="ts-cal-title">{{ taskRangeLabel }}</h2>
+            <div class="ts-view-switch">
+              <button
+                v-for="v in taskViewOptions"
+                :key="v.id"
+                type="button"
+                class="ts-view-btn"
+                :class="{ active: taskView === v.id }"
+                @click="selectTaskView(v.id)"
               >
-                <div class="task-planner-history-head">
-                  <el-tag :type="s.status === 'COMPLETED' ? 'success' : 'warning'" size="small">
-                    {{ s.status === "COMPLETED" ? "已完成" : "对齐中" }}
-                  </el-tag>
-                  <span class="task-planner-history-time">{{ s.updated_at || s.created_at }}</span>
+                {{ v.label }}
+              </button>
+            </div>
+            <div class="ts-cal-actions">
+              <span class="ts-local-hint">本地缓存</span>
+              <el-button size="small" :loading="taskLoading" text @click="loadTasks">刷新</el-button>
+              <el-button type="primary" class="ts-add-btn" @click="openTaskDialog()">+ 添加任务</el-button>
+            </div>
+          </header>
+
+          <div v-loading="taskLoading" class="ts-cal-body">
+            <!-- 日：单列聚焦 -->
+            <div v-if="taskView === 'day'" class="ts-day">
+              <div class="ts-day-hero" :class="{ 'is-today': taskDayHeader.isToday }">
+                <div class="ts-day-hero-weekday">{{ taskDayHeader.weekday }}</div>
+                <div class="ts-day-hero-date">
+                  <span class="ts-day-hero-num">{{ taskDayHeader.day }}</span>
+                  <span class="ts-day-hero-meta">{{ taskDayHeader.year }}年{{ taskDayHeader.month }}月</span>
                 </div>
-                <div class="task-planner-history-title">{{ s.title }}</div>
-                <div class="task-planner-history-meta">追问 {{ s.turn_count ?? 0 }} 轮</div>
-              </el-card>
-            </div>
-          </div>
-
-          <div class="task-planner-main">
-            <div class="task-planner-toolbar">
-              <el-tag v-if="taskPlannerSessionId" type="info" size="small">
-                第 {{ taskPlannerTurnCount }} / {{ taskPlannerMaxTurns }} 轮
-              </el-tag>
-              <el-tag v-if="taskPlannerAlignment === 'sufficient'" type="success" size="small">
-                要素已充分
-              </el-tag>
-              <el-button
-                v-if="taskPlannerSessionId && taskPlannerStatus !== 'COMPLETED'"
-                size="small"
-                type="success"
-                :loading="taskPlannerLoading"
-                @click="forceCompleteTaskPlanner"
+                <div class="ts-day-hero-stat">
+                  {{ taskDayPendingCount }} 待办 · {{ taskItems.length }} 项
+                </div>
+              </div>
+              <button type="button" class="ts-inline-add" @click="openTaskDialog(null, taskAnchor)">
+                + 在此日添加任务
+              </button>
+              <div v-if="!taskItems.length" class="ts-empty">这一天还没有任务，把思考好的内容粘贴进来吧</div>
+              <article
+                v-for="t in taskItems"
+                :key="t.id"
+                class="ts-task-card"
+                :class="{ done: t.status === 'done' }"
               >
-                直接生成任务书
-              </el-button>
+                <label class="ts-task-check" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="t.status === 'done'"
+                    @change="toggleTaskDone(t)"
+                  />
+                </label>
+                <div class="ts-task-main" @click="openTaskDialog(t)">
+                  <div class="ts-task-top">
+                    <span class="ts-task-time">{{ formatTaskTime(t.due_at) }}</span>
+                    <div class="ts-task-ops">
+                      <button type="button" class="ts-link" @click.stop="openTaskDialog(t)">编辑</button>
+                      <button type="button" class="ts-link danger" @click.stop="deleteTaskItem(t)">删除</button>
+                    </div>
+                  </div>
+                  <h3 class="ts-task-title">{{ t.title }}</h3>
+                  <pre class="ts-task-body">{{ t.content }}</pre>
+                </div>
+              </article>
             </div>
 
-            <div ref="taskPlannerChatEl" class="task-planner-chat">
-              <el-empty
-                v-if="!taskPlannerMessages.length"
-                description="用一句话描述你想做的任务，本地模型会追问细节并对齐要素"
-              />
+            <!-- 周：Timestripe 式七列 Horizons -->
+            <div v-else-if="taskView === 'week'" class="ts-week">
               <div
-                v-for="(m, idx) in taskPlannerMessages"
-                :key="`${idx}-${m.time || idx}`"
-                class="task-planner-msg"
-                :class="m.role === 'user' ? 'is-user' : 'is-assistant'"
+                v-for="col in taskWeekColumns"
+                :key="col.date"
+                class="ts-week-col"
+                :class="{ today: col.isToday }"
               >
-                <div class="task-planner-msg-role">{{ m.role === "user" ? "你" : "助手" }}</div>
-                <div class="task-planner-msg-body">{{ m.content }}</div>
-                <div v-if="m.time" class="task-planner-msg-time">{{ m.time }}</div>
+                <button type="button" class="ts-week-head" @click="drillTaskDay(col.date)">
+                  <span class="ts-week-wd">{{ col.weekday }}</span>
+                  <span class="ts-week-num" :class="{ ring: col.isToday }">{{ col.dayNum }}</span>
+                </button>
+                <div class="ts-week-stack">
+                  <div
+                    v-for="t in tasksOnDate(col.date)"
+                    :key="t.id"
+                    class="ts-week-pill"
+                    :class="{ done: t.status === 'done' }"
+                    @click="openTaskDialog(t)"
+                  >
+                    <input
+                      type="checkbox"
+                      class="ts-pill-check"
+                      :checked="t.status === 'done'"
+                      @click.stop
+                      @change="toggleTaskDone(t)"
+                    />
+                    <div class="ts-pill-text">
+                      <span class="ts-pill-time">{{ formatTaskTime(t.due_at) }}</span>
+                      <span class="ts-pill-title">{{ t.title }}</span>
+                    </div>
+                  </div>
+                  <button type="button" class="ts-week-add" @click="openTaskDialog(null, col.date)">
+                    + 添加
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div class="task-planner-input">
-              <el-input
-                v-model="taskPlannerInput"
-                type="textarea"
-                :rows="3"
-                :disabled="taskPlannerLoading || taskPlannerStatus === 'COMPLETED'"
-                placeholder="描述任务或回答追问…"
-                maxlength="8000"
-                show-word-limit
-                @keydown.ctrl.enter.prevent="sendTaskPlannerMessage"
-              />
-              <div class="task-planner-input-actions">
-                <span class="task-planner-hint">Ctrl+Enter 发送</span>
-                <el-button
-                  type="primary"
-                  :loading="taskPlannerLoading"
-                  :disabled="!taskPlannerInput.trim() && !!taskPlannerSessionId"
-                  @click="sendTaskPlannerMessage"
+            <!-- 月：直升机视角网格 -->
+            <div v-else-if="taskView === 'month'" class="ts-month">
+              <div class="ts-month-weekdays">
+                <span v-for="w in taskWeekdayLabels" :key="w">{{ w }}</span>
+              </div>
+              <div class="ts-month-grid">
+                <div
+                  v-for="cell in taskMonthCells"
+                  :key="cell.key"
+                  class="ts-month-cell"
+                  :class="{ muted: !cell.inMonth, today: cell.isToday, 'has-tasks': cell.taskCount > 0 }"
+                  @click="cell.inMonth && drillTaskDay(cell.date)"
                 >
-                  {{ taskPlannerSessionId ? "回复" : "开始规划" }}
-                </el-button>
+                  <div class="ts-month-cell-head">
+                    <span class="ts-month-day" :class="{ ring: cell.isToday }">{{ cell.day }}</span>
+                    <span v-if="cell.taskCount" class="ts-month-badge">{{ cell.taskCount }}</span>
+                  </div>
+                  <div class="ts-month-bars">
+                    <div
+                      v-for="t in tasksOnDate(cell.date).slice(0, 4)"
+                      :key="t.id"
+                      class="ts-month-bar"
+                      :class="{ done: t.status === 'done' }"
+                      @click.stop="openTaskDialog(t)"
+                    >
+                      {{ t.title }}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div class="task-planner-schema">
-            <div class="task-planner-side-title">当前要素</div>
-            <el-descriptions :column="1" border size="small" class="task-planner-desc">
-              <el-descriptions-item
-                v-for="key in taskPlannerSchemaKeys"
-                :key="key"
-                :label="taskPlannerFieldLabels[key] || key"
+            <!-- 年：12 月鸟瞰 + 迷你日历 -->
+            <div v-else class="ts-year">
+              <div
+                v-for="m in taskYearMonths"
+                :key="m.key"
+                class="ts-year-card"
+                @click="drillTaskMonth(m.month)"
               >
-                <span :class="{ 'task-planner-empty': !taskPlannerSchema[key] }">
-                  {{ taskPlannerSchema[key] || "（待补充）" }}
-                </span>
-              </el-descriptions-item>
-            </el-descriptions>
-            <div v-if="taskPlannerEmptyFields.length" class="task-planner-missing">
-              待对齐：{{ taskPlannerEmptyFields.map((k) => taskPlannerFieldLabels[k] || k).join("、") }}
+                <div class="ts-year-card-head">
+                  <span class="ts-year-name">{{ m.label }}</span>
+                  <span class="ts-year-meta">{{ m.count }} 项 · {{ m.pending }} 待办</span>
+                </div>
+                <div class="ts-year-mini">
+                  <span
+                    v-for="(c, idx) in getMiniMonthCells(m.month)"
+                    :key="`${m.key}-${idx}`"
+                    class="ts-year-dot"
+                    :class="{
+                      dim: !c.inMonth,
+                      today: c.isToday,
+                      busy: c.hasTask,
+                      done: c.allDone,
+                    }"
+                  />
+                </div>
+              </div>
             </div>
-
-            <el-card v-if="taskPlannerFinalSpec" shadow="never" class="task-planner-spec-card">
-              <template #header>任务执行细则</template>
-              <pre class="task-planner-spec">{{ taskPlannerFinalSpec }}</pre>
-            </el-card>
           </div>
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog
+      v-model="taskDialogVisible"
+      :title="taskEditingId ? '编辑任务' : '添加任务'"
+      width="640px"
+      destroy-on-close
+      @closed="resetTaskForm"
+    >
+      <el-form label-width="88px">
+        <el-form-item label="标题">
+          <el-input v-model="taskFormTitle" placeholder="可选；留空则取内容首行" maxlength="120" />
+        </el-form-item>
+        <el-form-item label="任务内容" required>
+          <el-input
+            v-model="taskFormContent"
+            type="textarea"
+            :rows="12"
+            placeholder="直接粘贴你反复思考后的任务说明（支持多行）"
+            maxlength="50000"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item label="截止时间" required>
+          <el-date-picker
+            v-model="taskFormDue"
+            type="datetime"
+            placeholder="选择日期时间"
+            format="YYYY-MM-DD HH:mm"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            :default-value="taskDuePickerDefault"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="提醒时间">
+          <el-checkbox v-model="taskRemindSame" label="与截止时间相同" />
+          <el-date-picker
+            v-if="!taskRemindSame"
+            v-model="taskFormRemind"
+            type="datetime"
+            placeholder="提前提醒"
+            format="YYYY-MM-DD HH:mm"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            style="width: 100%; margin-top: 8px"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="taskDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="taskSaving" @click="saveTask">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="dataPostsVisible"
@@ -919,30 +1021,39 @@ const publishAttachMax = 9;
 const publishAttachments = ref([]);
 const publishImageTokensText = ref("");
 
-const taskPlannerSessions = ref([]);
-const taskPlannerHistoryLoading = ref(false);
-const taskPlannerSessionId = ref("");
-const taskPlannerStatus = ref("IN_PROGRESS");
-const taskPlannerTurnCount = ref(0);
-const taskPlannerMaxTurns = ref(5);
-const taskPlannerAlignment = ref("incomplete");
-const taskPlannerMessages = ref([]);
-const taskPlannerSchema = ref({});
-const taskPlannerFieldLabels = ref({});
-const taskPlannerSchemaKeys = ref([
-  "goal",
-  "tech_stack",
-  "data_protocol",
-  "core_logic",
-  "performance_deadline",
-  "deliverables",
-  "acceptance_criteria",
-]);
-const taskPlannerEmptyFields = ref([]);
-const taskPlannerFinalSpec = ref("");
-const taskPlannerInput = ref("");
-const taskPlannerLoading = ref(false);
-const taskPlannerChatEl = ref(null);
+function formatTaskDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const taskView = ref("week");
+const taskAnchor = ref(formatTaskDate(new Date()));
+const taskTodayLabel = ref(formatTaskDate(new Date()));
+/** 全部任务（localStorage 为唯一数据源，暂不依赖后端） */
+const taskStoreAll = ref([]);
+const taskLoading = ref(false);
+const taskDialogVisible = ref(false);
+const taskEditingId = ref("");
+const taskFormTitle = ref("");
+const taskFormContent = ref("");
+const taskFormDue = ref("");
+const taskFormRemind = ref("");
+const taskRemindSame = ref(true);
+const taskSaving = ref(false);
+const taskDuePickerDefault = ref(new Date());
+const taskWeekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
+const taskWeekdayLong = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const taskViewOptions = [
+  { id: "day", label: "日" },
+  { id: "week", label: "周" },
+  { id: "month", label: "月" },
+  { id: "year", label: "年" },
+];
+let taskReminderPollTimer = null;
+const TASK_STORE_KEY = "deal_manage_tasks";
+const TASK_NOTIFIED_KEY = "deal_manage_task_notified_ids";
 
 const publishRouterHint = computed(() => {
   const r = publishRouterMeta.value;
@@ -991,143 +1102,531 @@ function publishImagesPayload() {
     .filter((s) => typeof s === "string" && s.trim());
 }
 
+function formatTaskDateTime(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  const sec = String(d.getSeconds()).padStart(2, "0");
+  return `${y}-${m}-${day} ${h}:${min}:${sec}`;
+}
+
+function taskDueDateKey(taskOrIso) {
+  const raw =
+    typeof taskOrIso === "string"
+      ? taskOrIso
+      : taskOrIso?.due_at || taskOrIso?.remind_at || "";
+  const s = String(raw).trim().replace("T", " ");
+  return s.length >= 10 ? s.slice(0, 10) : "";
+}
+
+function normalizeDueAtForApi(val) {
+  if (!val) return "";
+  if (val instanceof Date) return formatTaskDateTime(val);
+  let s = String(val).trim().replace("T", " ");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return `${s} 09:00:00`;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  return s.slice(0, 19);
+}
+
+function defaultTaskDueDatetime(presetDate) {
+  const now = new Date();
+  let d;
+  if (presetDate && /^\d{4}-\d{2}-\d{2}$/.test(presetDate)) {
+    const [y, mo, da] = presetDate.split("-").map(Number);
+    d = new Date(y, mo - 1, da, now.getHours(), now.getMinutes(), 0);
+  } else {
+    d = new Date(now);
+    d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0);
+  }
+  return formatTaskDateTime(d);
+}
+
+function parseLocalDateTime(str) {
+  const s = normalizeDueAtForApi(str);
+  if (!s) return new Date();
+  const [datePart, timePart = "09:00:00"] = s.split(" ");
+  const [y, mo, da] = datePart.split("-").map(Number);
+  const [hh, mm, ss = 0] = timePart.split(":").map(Number);
+  return new Date(y, mo - 1, da, hh, mm, ss);
+}
+
+function syncTaskTodayLabel() {
+  taskTodayLabel.value = formatTaskDate(new Date());
+}
+
+function parseTaskAnchor() {
+  const s = taskAnchor.value || formatTaskDate(new Date());
+  const [y, mo, da] = s.split("-").map(Number);
+  return new Date(y, mo - 1, da);
+}
+
+function formatTaskTime(iso) {
+  if (!iso) return "";
+  const p = String(iso).replace("T", " ");
+  return p.length >= 16 ? p.slice(11, 16) : p.slice(11) || p;
+}
+
+const taskViewUnit = computed(() => {
+  const m = { day: "日", week: "周", month: "月", year: "年" };
+  return m[taskView.value] || "";
+});
+
+const taskRangeLabel = computed(() => {
+  const d = parseTaskAnchor();
+  const today = formatTaskDate(new Date());
+  if (taskView.value === "day") {
+    const wd = taskWeekdayLong[d.getDay()];
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · ${wd}`;
+  }
+  if (taskView.value === "week") {
+    const start = mondayOf(d);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const sameYear = start.getFullYear() === end.getFullYear();
+    if (sameYear) {
+      return `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 — ${end.getMonth() + 1}月${end.getDate()}日`;
+    }
+    return `${formatTaskDate(start)} — ${formatTaskDate(end)}`;
+  }
+  if (taskView.value === "month") {
+    return `${d.getFullYear()}年 ${d.getMonth() + 1}月`;
+  }
+  return `${d.getFullYear()} 年`;
+});
+
+function mondayOf(d) {
+  const x = new Date(d);
+  const day = x.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  x.setDate(x.getDate() + diff);
+  return x;
+}
+
+function computeTaskRange(anchorStr, view) {
+  const base = (anchorStr || formatTaskDate(new Date())).slice(0, 10);
+  const [y, mo, da] = base.split("-").map(Number);
+  const d = new Date(y, mo - 1, da);
+  if (view === "day") {
+    const s = formatTaskDate(d);
+    return { from: s, to: s };
+  }
+  if (view === "week") {
+    const start = mondayOf(d);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return { from: formatTaskDate(start), to: formatTaskDate(end) };
+  }
+  if (view === "month") {
+    const start = new Date(d.getFullYear(), d.getMonth(), 1);
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    return { from: formatTaskDate(start), to: formatTaskDate(end) };
+  }
+  return { from: `${d.getFullYear()}-01-01`, to: `${d.getFullYear()}-12-31` };
+}
+
+function filterTasksForView(tasks, anchor, view) {
+  const { from, to } = computeTaskRange(anchor, view);
+  return [...tasks]
+    .filter((t) => {
+      const k = taskDueDateKey(t);
+      return k && k >= from && k <= to;
+    })
+    .sort((a, b) => String(a.due_at || "").localeCompare(String(b.due_at || "")));
+}
+
+const taskItems = computed(() =>
+  filterTasksForView(taskStoreAll.value, taskAnchor.value, taskView.value)
+);
+
+function loadTaskStoreFromCache() {
+  try {
+    const raw = localStorage.getItem(TASK_STORE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    taskStoreAll.value = Array.isArray(list) ? list : [];
+  } catch {
+    taskStoreAll.value = [];
+  }
+}
+
+function persistTaskStore() {
+  try {
+    localStorage.setItem(TASK_STORE_KEY, JSON.stringify(taskStoreAll.value));
+  } catch (e) {
+    ElMessage.error(`本地保存失败: ${e.message || e}`);
+  }
+}
+
+function newTaskId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function buildTaskRecord({ content, title, dueAt, remindAt, existing }) {
+  const now = formatTaskDateTime(new Date());
+  const body = content.trim();
+  const due = normalizeDueAtForApi(dueAt);
+  const remind = normalizeDueAtForApi(remindAt || dueAt);
+  const autoTitle = body.split("\n")[0].trim().slice(0, 120) || "未命名任务";
+  if (existing) {
+    return {
+      ...existing,
+      title: (title || "").trim() || autoTitle,
+      content: body,
+      due_at: due,
+      remind_at: remind,
+      reminded: false,
+      reminded_at: null,
+      updated_at: now,
+    };
+  }
+  return {
+    id: newTaskId(),
+    title: (title || "").trim() || autoTitle,
+    content: body,
+    due_at: due,
+    remind_at: remind,
+    status: "pending",
+    reminded: false,
+    reminded_at: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+const taskDayHeader = computed(() => {
+  const d = parseTaskAnchor();
+  const today = formatTaskDate(new Date());
+  const anchor = formatTaskDate(d);
+  return {
+    weekday: taskWeekdayLong[d.getDay()],
+    day: d.getDate(),
+    month: d.getMonth() + 1,
+    year: d.getFullYear(),
+    isToday: anchor === today,
+  };
+});
+
+const taskDayPendingCount = computed(() => {
+  return taskItems.value.filter((t) => t.status !== "done").length;
+});
+
+function selectTaskView(view) {
+  if (taskView.value === view) return;
+  taskView.value = view;
+  syncTaskTodayLabel();
+}
+
+const taskWeekColumns = computed(() => {
+  const start = mondayOf(parseTaskAnchor());
+  const today = formatTaskDate(new Date());
+  const cols = [];
+  for (let i = 0; i < 7; i++) {
+    const x = new Date(start);
+    x.setDate(start.getDate() + i);
+    const date = formatTaskDate(x);
+    cols.push({
+      date,
+      label: `${x.getMonth() + 1}/${x.getDate()}`,
+      weekday: taskWeekdayLabels[i],
+      dayNum: x.getDate(),
+      isToday: date === today,
+    });
+  }
+  return cols;
+});
+
+const taskMonthCells = computed(() => {
+  const d = parseTaskAnchor();
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const first = new Date(y, m, 1);
+  const startPad = (first.getDay() + 6) % 7;
+  const gridStart = new Date(y, m, 1 - startPad);
+  const today = formatTaskDate(new Date());
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const x = new Date(gridStart);
+    x.setDate(gridStart.getDate() + i);
+    const date = formatTaskDate(x);
+    const dayTasks = taskItems.value.filter((t) => taskDueDateKey(t) === date);
+    cells.push({
+      key: `${date}-${i}`,
+      date,
+      day: x.getDate(),
+      inMonth: x.getMonth() === m,
+      isToday: date === today,
+      taskCount: dayTasks.length,
+    });
+  }
+  return cells;
+});
+
+const taskYearMonths = computed(() => {
+  const y = parseTaskAnchor().getFullYear();
+  const yearTasks = filterTasksForView(taskStoreAll.value, `${y}-06-15`, "year");
+  const months = [];
+  for (let m = 0; m < 12; m++) {
+    const prefix = `${y}-${String(m + 1).padStart(2, "0")}`;
+    const inMonth = yearTasks.filter((t) => taskDueDateKey(t).startsWith(prefix));
+    months.push({
+      key: prefix,
+      month: m + 1,
+      label: `${m + 1}月`,
+      count: inMonth.length,
+      pending: inMonth.filter((t) => t.status !== "done").length,
+    });
+  }
+  return months;
+});
+
+function tasksOnDate(dateStr) {
+  return taskItems.value.filter((t) => taskDueDateKey(t) === dateStr);
+}
+
+function getMiniMonthCells(month) {
+  const y = parseTaskAnchor().getFullYear();
+  const first = new Date(y, month - 1, 1);
+  const startPad = (first.getDay() + 6) % 7;
+  const gridStart = new Date(y, month - 1, 1 - startPad);
+  const today = formatTaskDate(new Date());
+  const yearTasks = filterTasksForView(taskStoreAll.value, `${y}-06-15`, "year");
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const x = new Date(gridStart);
+    x.setDate(gridStart.getDate() + i);
+    const date = formatTaskDate(x);
+    const inMonth = x.getMonth() === month - 1;
+    const dayTasks = inMonth
+      ? yearTasks.filter((t) => taskDueDateKey(t) === date)
+      : [];
+    cells.push({
+      inMonth,
+      isToday: date === today,
+      hasTask: dayTasks.length > 0,
+      allDone: dayTasks.length > 0 && dayTasks.every((t) => t.status === "done"),
+    });
+  }
+  return cells;
+}
+
+function loadTaskNotifiedIds() {
+  try {
+    return new Set(JSON.parse(sessionStorage.getItem(TASK_NOTIFIED_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveTaskNotifiedIds(set) {
+  sessionStorage.setItem(TASK_NOTIFIED_KEY, JSON.stringify([...set]));
+}
+
+function notifyTaskReminder(task) {
+  const ids = loadTaskNotifiedIds();
+  if (ids.has(task.id)) return;
+  ids.add(task.id);
+  saveTaskNotifiedIds(ids);
+  ElNotification({
+    title: "任务提醒",
+    message: `${task.title}\n截止：${task.due_at || ""}`,
+    type: "warning",
+    duration: 0,
+    onClick: () => openTaskDialog(task),
+  });
+  if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+    try {
+      new Notification("任务提醒", { body: task.title });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function pollTaskReminders() {
+  const now = new Date();
+  let changed = false;
+  const next = taskStoreAll.value.map((t) => {
+    if (t.status !== "pending" || t.reminded) return t;
+    const remind = parseLocalDateTime(t.remind_at || t.due_at);
+    if (remind > now) return t;
+    changed = true;
+    notifyTaskReminder(t);
+    return {
+      ...t,
+      reminded: true,
+      reminded_at: formatTaskDateTime(now),
+      updated_at: formatTaskDateTime(now),
+    };
+  });
+  if (changed) {
+    taskStoreAll.value = next;
+    persistTaskStore();
+  }
+}
+
+function loadTasks() {
+  taskLoading.value = true;
+  syncTaskTodayLabel();
+  loadTaskStoreFromCache();
+  taskLoading.value = false;
+}
+
+function focusTaskOnCalendar(dueAt) {
+  const dateKey = taskDueDateKey(dueAt);
+  if (!dateKey) return;
+  taskAnchor.value = dateKey;
+}
+
+function taskNav(delta) {
+  const d = parseTaskAnchor();
+  if (taskView.value === "day") d.setDate(d.getDate() + delta);
+  else if (taskView.value === "week") d.setDate(d.getDate() + delta * 7);
+  else if (taskView.value === "month") d.setMonth(d.getMonth() + delta);
+  else d.setFullYear(d.getFullYear() + delta);
+  taskAnchor.value = formatTaskDate(d);
+}
+
+function taskNavToday() {
+  taskAnchor.value = formatTaskDate(new Date());
+}
+
+function drillTaskDay(dateStr) {
+  taskAnchor.value = dateStr;
+  taskView.value = "day";
+}
+
+function drillTaskMonth(month) {
+  const d = parseTaskAnchor();
+  taskAnchor.value = formatTaskDate(new Date(d.getFullYear(), month - 1, 1));
+  taskView.value = "month";
+}
+
+function resetTaskForm() {
+  taskEditingId.value = "";
+  taskFormTitle.value = "";
+  taskFormContent.value = "";
+  taskFormDue.value = "";
+  taskFormRemind.value = "";
+  taskRemindSame.value = true;
+}
+
+function openTaskDialog(task, presetDate) {
+  resetTaskForm();
+  if (task) {
+    taskEditingId.value = task.id;
+    taskFormTitle.value = task.title || "";
+    taskFormContent.value = task.content || "";
+    taskFormDue.value = normalizeDueAtForApi(task.due_at || "");
+    taskFormRemind.value = normalizeDueAtForApi(task.remind_at || "");
+    taskRemindSame.value = !task.remind_at || task.remind_at === task.due_at;
+    taskDuePickerDefault.value = parseLocalDateTime(taskFormDue.value);
+  } else {
+    const base = presetDate || taskAnchor.value || formatTaskDate(new Date());
+    taskFormDue.value = defaultTaskDueDatetime(base);
+    taskDuePickerDefault.value = parseLocalDateTime(taskFormDue.value);
+  }
+  taskDialogVisible.value = true;
+}
+
+async function saveTask() {
+  const content = taskFormContent.value.trim();
+  if (!content) {
+    ElMessage.warning("请粘贴或填写任务内容");
+    return;
+  }
+  const dueAt = normalizeDueAtForApi(taskFormDue.value);
+  if (!dueAt) {
+    ElMessage.warning("请选择截止时间");
+    return;
+  }
+  const remindAt = taskRemindSame.value
+    ? dueAt
+    : normalizeDueAtForApi(taskFormRemind.value) || dueAt;
+
+  taskSaving.value = true;
+  try {
+    let saved;
+    if (taskEditingId.value) {
+      const idx = taskStoreAll.value.findIndex((t) => t.id === taskEditingId.value);
+      if (idx < 0) throw new Error("任务不存在");
+      saved = buildTaskRecord({
+        content,
+        title: taskFormTitle.value,
+        dueAt,
+        remindAt,
+        existing: taskStoreAll.value[idx],
+      });
+      const copy = [...taskStoreAll.value];
+      copy[idx] = saved;
+      taskStoreAll.value = copy;
+    } else {
+      saved = buildTaskRecord({
+        content,
+        title: taskFormTitle.value,
+        dueAt,
+        remindAt,
+      });
+      taskStoreAll.value = [...taskStoreAll.value, saved];
+    }
+    persistTaskStore();
+    focusTaskOnCalendar(saved.due_at);
+    taskDialogVisible.value = false;
+    ElMessage.success("已保存到本地");
+  } catch (e) {
+    ElMessage.error(`保存失败: ${e.message || e}`);
+  } finally {
+    taskSaving.value = false;
+  }
+}
+
+async function toggleTaskDone(task) {
+  const idx = taskStoreAll.value.findIndex((t) => t.id === task.id);
+  if (idx < 0) return;
+  const next = task.status === "done" ? "pending" : "done";
+  const copy = [...taskStoreAll.value];
+  copy[idx] = {
+    ...copy[idx],
+    status: next,
+    updated_at: formatTaskDateTime(new Date()),
+  };
+  taskStoreAll.value = copy;
+  persistTaskStore();
+}
+
+async function deleteTaskItem(task) {
+  try {
+    await ElMessageBox.confirm(`删除任务「${task.title}」？`, "确认", { type: "warning" });
+  } catch {
+    return;
+  }
+  taskStoreAll.value = taskStoreAll.value.filter((t) => t.id !== task.id);
+  persistTaskStore();
+  ElMessage.success("已删除");
+}
+
+function startTaskReminderPoll() {
+  if (taskReminderPollTimer) return;
+  if (typeof Notification !== "undefined" && Notification.permission === "default") {
+    Notification.requestPermission().catch(() => {});
+  }
+  pollTaskReminders();
+  taskReminderPollTimer = setInterval(pollTaskReminders, 30000);
+}
+
+function stopTaskReminderPoll() {
+  if (taskReminderPollTimer) {
+    clearInterval(taskReminderPollTimer);
+    taskReminderPollTimer = null;
+  }
+}
+
 function publishImageTokensPayload() {
   return publishImageTokensText.value
     .split(/[,，\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-function applyTaskPlannerSession(data) {
-  if (!data) return;
-  taskPlannerSessionId.value = data.id || "";
-  taskPlannerStatus.value = data.status || "IN_PROGRESS";
-  taskPlannerTurnCount.value = data.turn_count ?? 0;
-  taskPlannerMaxTurns.value = data.max_turns ?? 5;
-  taskPlannerAlignment.value = data.alignment_status || "incomplete";
-  taskPlannerMessages.value = Array.isArray(data.messages) ? data.messages : [];
-  taskPlannerSchema.value = data.current_schema || {};
-  taskPlannerFieldLabels.value = data.field_labels || {};
-  if (data.field_labels) {
-    taskPlannerSchemaKeys.value = Object.keys(data.field_labels);
-  }
-  taskPlannerEmptyFields.value = Array.isArray(data.empty_fields) ? data.empty_fields : [];
-  taskPlannerFinalSpec.value = data.final_spec || "";
-  nextTick(() => {
-    const el = taskPlannerChatEl.value;
-    if (el) el.scrollTop = el.scrollHeight;
-  });
-}
-
-async function loadTaskPlannerSessions() {
-  taskPlannerHistoryLoading.value = true;
-  try {
-    const res = await fetch("/api/task-planner/sessions");
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    taskPlannerSessions.value = data.items || [];
-  } catch (e) {
-    ElMessage.error(`加载规划历史失败: ${e.message || e}`);
-  } finally {
-    taskPlannerHistoryLoading.value = false;
-  }
-}
-
-function newTaskPlannerSession() {
-  taskPlannerSessionId.value = "";
-  taskPlannerStatus.value = "IN_PROGRESS";
-  taskPlannerTurnCount.value = 0;
-  taskPlannerAlignment.value = "incomplete";
-  taskPlannerMessages.value = [];
-  taskPlannerSchema.value = {};
-  taskPlannerEmptyFields.value = [];
-  taskPlannerFinalSpec.value = "";
-  taskPlannerInput.value = "";
-}
-
-async function openTaskPlannerSession(id) {
-  try {
-    const res = await fetch(`/api/task-planner/sessions/${encodeURIComponent(id)}`);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    applyTaskPlannerSession(data);
-  } catch (e) {
-    ElMessage.error(`打开会话失败: ${e.message || e}`);
-  }
-}
-
-async function sendTaskPlannerMessage() {
-  const text = taskPlannerInput.value.trim();
-  if (!text) {
-    ElMessage.warning("请输入内容");
-    return;
-  }
-  if (taskPlannerLoading.value) return;
-  taskPlannerLoading.value = true;
-  try {
-    let res;
-    if (!taskPlannerSessionId.value) {
-      res = await fetch("/api/task-planner/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initial_input: text }),
-      });
-    } else {
-      res = await fetch(
-        `/api/task-planner/sessions/${encodeURIComponent(taskPlannerSessionId.value)}/chat`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_input: text }),
-        }
-      );
-    }
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || res.statusText);
-    applyTaskPlannerSession(data);
-    taskPlannerInput.value = "";
-    await loadTaskPlannerSessions();
-    if (data.status === "COMPLETED") {
-      ElMessage.success("任务书已生成");
-    }
-  } catch (e) {
-    ElMessage.error(`任务规划失败: ${e.message || e}`);
-  } finally {
-    taskPlannerLoading.value = false;
-  }
-}
-
-async function forceCompleteTaskPlanner() {
-  if (!taskPlannerSessionId.value || taskPlannerLoading.value) return;
-  try {
-    await ElMessageBox.confirm(
-      "将基于当前已对齐要素直接生成任务书（未填项由模型合理补全），是否继续？",
-      "生成任务书",
-      { type: "info" }
-    );
-  } catch {
-    return;
-  }
-  taskPlannerLoading.value = true;
-  try {
-    const res = await fetch(
-      `/api/task-planner/sessions/${encodeURIComponent(taskPlannerSessionId.value)}/chat`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_input: "请基于当前要素生成任务书。", force_complete: true }),
-      }
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || res.statusText);
-    applyTaskPlannerSession(data);
-    await loadTaskPlannerSessions();
-    ElMessage.success("任务书已生成");
-  } catch (e) {
-    ElMessage.error(`生成失败: ${e.message || e}`);
-  } finally {
-    taskPlannerLoading.value = false;
-  }
 }
 
 function onPublishImageSelected(uploadFile) {
@@ -2113,8 +2612,13 @@ watch(mainTab, (tab) => {
     loadPublishPrompts();
     loadPublishHistory();
   }
-  if (tab === "task-planner") {
-    loadTaskPlannerSessions();
+  if (tab === "tasks") {
+    syncTaskTodayLabel();
+    if (!taskAnchor.value) taskAnchor.value = formatTaskDate(new Date());
+    loadTasks();
+    startTaskReminderPoll();
+  } else {
+    stopTaskReminderPoll();
   }
 });
 
@@ -2123,8 +2627,12 @@ watch(publishPlatform, () => {
 });
 
 onMounted(() => {
+  syncTaskTodayLabel();
+  taskAnchor.value = formatTaskDate(new Date());
+  loadTaskStoreFromCache();
   refreshAll();
   pollTimer = setInterval(() => loadCards(), 300000);
+  startTaskReminderPoll();
   window.addEventListener("click", closeVideoContextMenu);
   window.addEventListener("scroll", closeVideoContextMenu, true);
   window.addEventListener("resize", closeVideoContextMenu);
@@ -2133,6 +2641,7 @@ onMounted(() => {
 onUnmounted(() => {
   detachImagePreviewPanListeners();
   clearPublishAttachments();
+  stopTaskReminderPoll();
   if (pollTimer) clearInterval(pollTimer);
   if (eventSource.value) {
     eventSource.value.close();
@@ -2551,150 +3060,601 @@ body {
   }
 }
 
-.task-planner-layout {
-  display: grid;
-  grid-template-columns: min(240px, 22vw) 1fr min(300px, 28vw);
-  gap: 14px;
-  align-items: start;
-  min-height: 62vh;
+/* Timestripe-inspired calendar (Horizons) */
+.ts-cal {
+  --ts-bg: #f3f0eb;
+  --ts-surface: #ffffff;
+  --ts-accent: #e8643c;
+  --ts-accent-soft: rgba(232, 100, 60, 0.12);
+  --ts-text: #2c2a26;
+  --ts-muted: #8a857c;
+  --ts-line: rgba(44, 42, 38, 0.08);
+  --ts-shadow: 0 1px 3px rgba(44, 42, 38, 0.06);
+  margin: -4px -8px 0;
+  padding: 0 4px 16px;
+  border-radius: 12px;
+  background: var(--ts-bg);
 }
-@media (max-width: 1100px) {
-  .task-planner-layout {
-    grid-template-columns: 1fr;
+html.dark .ts-cal {
+  --ts-bg: #1a1917;
+  --ts-surface: #242220;
+  --ts-accent: #f07a55;
+  --ts-accent-soft: rgba(240, 122, 85, 0.15);
+  --ts-text: #ece8e1;
+  --ts-muted: #9a948a;
+  --ts-line: rgba(255, 255, 255, 0.08);
+  --ts-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.ts-cal-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--ts-line);
+  background: var(--ts-surface);
+  border-radius: 12px 12px 0 0;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+@media (max-width: 900px) {
+  .ts-cal-header {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+  }
+  .ts-cal-title {
+    grid-column: 1 / -1;
+    text-align: center;
   }
 }
-.task-planner-side-head {
+.ts-cal-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 6px;
 }
-.task-planner-side-title {
+.ts-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--ts-line);
+  border-radius: 8px;
+  background: var(--ts-surface);
+  color: var(--ts-text);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ts-icon-btn:hover {
+  border-color: var(--ts-accent);
+  color: var(--ts-accent);
+}
+.ts-today-btn {
+  border: none;
+  background: transparent;
+  color: var(--ts-accent);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
 }
-.task-planner-history {
-  margin-top: 8px;
-  max-height: 68vh;
-  overflow-y: auto;
+.ts-today-btn:hover {
+  background: var(--ts-accent-soft);
+}
+.ts-cal-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ts-text);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.ts-view-switch {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--ts-bg);
+  border: 1px solid var(--ts-line);
+}
+.ts-view-btn {
+  border: none;
+  background: transparent;
+  color: var(--ts-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ts-view-btn.active {
+  background: var(--ts-surface);
+  color: var(--ts-text);
+  box-shadow: var(--ts-shadow);
+}
+.ts-view-btn:hover:not(.active) {
+  color: var(--ts-text);
+}
+.ts-cal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ts-local-hint {
+  font-size: 11px;
+  color: var(--ts-muted);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--ts-bg);
+  border: 1px solid var(--ts-line);
+}
+.ts-add-btn {
+  border-radius: 10px !important;
+  font-weight: 600;
+}
+.ts-cal-body {
+  min-height: calc(100vh - 220px);
+  padding: 12px;
+}
+
+/* Day horizon */
+.ts-day {
+  max-width: 720px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
-.task-planner-history-item {
-  cursor: pointer;
-  border-radius: 8px;
+.ts-day-hero {
+  background: var(--ts-surface);
+  border-radius: 16px;
+  padding: 24px 28px;
+  box-shadow: var(--ts-shadow);
+  border: 1px solid var(--ts-line);
 }
-.task-planner-history-item.active {
-  border-color: var(--el-color-primary);
+.ts-day-hero.is-today {
+  border-color: var(--ts-accent);
+  box-shadow: 0 0 0 1px var(--ts-accent-soft);
 }
-.task-planner-history-head {
+.ts-day-hero-weekday {
+  font-size: 14px;
+  color: var(--ts-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ts-day-hero-date {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.task-planner-history-time {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
-.task-planner-history-title {
-  font-size: 13px;
-  line-height: 1.45;
-  word-break: break-word;
-}
-.task-planner-history-meta {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
-.task-planner-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.task-planner-chat {
-  min-height: 320px;
-  max-height: 52vh;
-  overflow-y: auto;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 10px;
-  padding: 12px;
-  background: var(--el-fill-color-blank);
-  margin-bottom: 12px;
-}
-.task-planner-msg {
-  margin-bottom: 12px;
-  max-width: 92%;
-}
-.task-planner-msg.is-user {
-  margin-left: auto;
-  text-align: right;
-}
-.task-planner-msg-role {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-  margin-bottom: 4px;
-}
-.task-planner-msg-body {
-  display: inline-block;
-  text-align: left;
-  padding: 8px 12px;
-  border-radius: 10px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-}
-.task-planner-msg.is-user .task-planner-msg-body {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-text-color-primary);
-}
-.task-planner-msg.is-assistant .task-planner-msg-body {
-  background: var(--el-fill-color-light);
-}
-.task-planner-msg-time {
-  font-size: 10px;
-  color: var(--el-text-color-placeholder);
+  align-items: baseline;
+  gap: 12px;
   margin-top: 4px;
 }
-.task-planner-input-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 8px;
+.ts-day-hero-num {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ts-text);
 }
-.task-planner-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+.ts-day-hero.is-today .ts-day-hero-num {
+  color: var(--ts-accent);
 }
-.task-planner-desc {
-  margin-top: 8px;
+.ts-day-hero-meta {
+  font-size: 16px;
+  color: var(--ts-muted);
 }
-.task-planner-empty {
-  color: var(--el-text-color-placeholder);
-  font-style: italic;
-}
-.task-planner-missing {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--el-color-warning);
-}
-.task-planner-spec-card {
+.ts-day-hero-stat {
   margin-top: 12px;
+  font-size: 13px;
+  color: var(--ts-muted);
 }
-.task-planner-spec {
+.ts-inline-add {
+  border: 1px dashed var(--ts-line);
+  background: var(--ts-surface);
+  color: var(--ts-muted);
+  border-radius: 12px;
+  padding: 12px 16px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 14px;
+}
+.ts-inline-add:hover {
+  border-color: var(--ts-accent);
+  color: var(--ts-accent);
+}
+.ts-empty {
+  text-align: center;
+  color: var(--ts-muted);
+  padding: 48px 16px;
+  font-size: 14px;
+}
+.ts-task-card {
+  display: flex;
+  gap: 12px;
+  background: var(--ts-surface);
+  border: 1px solid var(--ts-line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: var(--ts-shadow);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.ts-task-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(44, 42, 38, 0.08);
+}
+.ts-task-card.done {
+  opacity: 0.65;
+}
+.ts-task-check input {
+  width: 18px;
+  height: 18px;
+  margin-top: 4px;
+  accent-color: var(--ts-accent);
+  cursor: pointer;
+}
+.ts-task-main {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.ts-task-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.ts-task-time {
+  font-size: 12px;
+  color: var(--ts-muted);
+  font-weight: 600;
+}
+.ts-task-ops {
+  display: flex;
+  gap: 10px;
+}
+.ts-link {
+  border: none;
+  background: none;
+  color: var(--ts-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.ts-link:hover {
+  color: var(--ts-accent);
+}
+.ts-link.danger:hover {
+  color: #d14343;
+}
+.ts-task-title {
+  margin: 6px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ts-text);
+}
+.ts-task-card.done .ts-task-title {
+  text-decoration: line-through;
+}
+.ts-task-body {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
-  line-height: 1.55;
-  max-height: 40vh;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ts-muted);
+  font-family: inherit;
+  max-height: 280px;
   overflow-y: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Week horizons — signature Timestripe columns */
+.ts-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+  min-height: calc(100vh - 260px);
+  align-items: stretch;
+}
+@media (max-width: 1100px) {
+  .ts-week {
+    grid-template-columns: repeat(2, 1fr);
+    min-height: auto;
+  }
+}
+@media (max-width: 600px) {
+  .ts-week {
+    grid-template-columns: 1fr;
+  }
+}
+.ts-week-col {
+  display: flex;
+  flex-direction: column;
+  background: var(--ts-surface);
+  border-radius: 14px;
+  border: 1px solid var(--ts-line);
+  min-height: 320px;
+  overflow: hidden;
+}
+.ts-week-col.today {
+  border-color: var(--ts-accent);
+  box-shadow: 0 0 0 1px var(--ts-accent-soft);
+}
+.ts-week-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--ts-line);
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+}
+.ts-week-head:hover {
+  background: var(--ts-accent-soft);
+}
+.ts-week-wd {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ts-muted);
+}
+.ts-week-col.today .ts-week-wd {
+  color: var(--ts-accent);
+}
+.ts-week-num {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ts-text);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.ts-week-num.ring {
+  background: var(--ts-accent);
+  color: #fff;
+}
+.ts-week-stack {
+  flex: 1;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+.ts-week-pill {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--ts-accent-soft);
+  border-left: 3px solid var(--ts-accent);
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ts-week-pill:hover {
+  background: rgba(232, 100, 60, 0.18);
+}
+.ts-week-pill.done {
+  background: var(--ts-bg);
+  border-left-color: var(--ts-muted);
+  opacity: 0.7;
+}
+.ts-pill-check {
+  margin-top: 2px;
+  accent-color: var(--ts-accent);
+  cursor: pointer;
+}
+.ts-pill-text {
+  min-width: 0;
+  flex: 1;
+}
+.ts-pill-time {
+  display: block;
+  font-size: 10px;
+  color: var(--ts-muted);
+  font-weight: 600;
+}
+.ts-pill-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ts-text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.ts-week-pill.done .ts-pill-title {
+  text-decoration: line-through;
+}
+.ts-week-add {
+  margin-top: auto;
+  border: none;
+  background: transparent;
+  color: var(--ts-muted);
+  font-size: 12px;
+  padding: 8px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.ts-week-add:hover {
+  background: var(--ts-bg);
+  color: var(--ts-accent);
+}
+
+/* Month helicopter view */
+.ts-month {
+  background: var(--ts-surface);
+  border-radius: 14px;
+  border: 1px solid var(--ts-line);
+  padding: 12px;
+  box-shadow: var(--ts-shadow);
+}
+.ts-month-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ts-muted);
+  padding-bottom: 8px;
+}
+.ts-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.ts-month-cell {
+  min-height: 100px;
+  border-radius: 10px;
+  padding: 6px;
+  background: var(--ts-bg);
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ts-month-cell:hover {
+  border-color: var(--ts-line);
+  background: var(--ts-surface);
+}
+.ts-month-cell.muted {
+  opacity: 0.35;
+}
+.ts-month-cell.today {
+  border-color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+}
+.ts-month-cell.has-tasks {
+  background: var(--ts-surface);
+}
+.ts-month-cell-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ts-month-day {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ts-text);
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.ts-month-day.ring {
+  background: var(--ts-accent);
+  color: #fff;
+}
+.ts-month-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ts-accent);
+  background: var(--ts-accent-soft);
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.ts-month-bars {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  overflow: hidden;
+}
+.ts-month-bar {
+  font-size: 10px;
+  line-height: 1.3;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--ts-accent-soft);
+  color: var(--ts-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid var(--ts-accent);
+}
+.ts-month-bar.done {
+  opacity: 0.55;
+  text-decoration: line-through;
+  border-left-color: var(--ts-muted);
+}
+
+/* Year overview */
+.ts-year {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 1100px) {
+  .ts-year {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .ts-year {
+    grid-template-columns: 1fr;
+  }
+}
+.ts-year-card {
+  background: var(--ts-surface);
+  border: 1px solid var(--ts-line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s;
+  box-shadow: var(--ts-shadow);
+}
+.ts-year-card:hover {
+  border-color: var(--ts-accent);
+  transform: translateY(-2px);
+}
+.ts-year-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+.ts-year-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ts-text);
+}
+.ts-year-meta {
+  font-size: 11px;
+  color: var(--ts-muted);
+}
+.ts-year-mini {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.ts-year-dot {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 2px;
+  background: var(--ts-bg);
+}
+.ts-year-dot.dim {
+  opacity: 0.25;
+}
+.ts-year-dot.busy {
+  background: var(--ts-accent-soft);
+}
+.ts-year-dot.busy.done {
+  background: var(--ts-line);
+}
+.ts-year-dot.today {
+  box-shadow: inset 0 0 0 1px var(--ts-accent);
 }
 
 .publish-toolbar {
