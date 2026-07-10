@@ -368,7 +368,7 @@ async def pause_script(script_id: str):
 
 @app.post("/api/scripts/{script_id}/stop")
 async def stop_script(script_id: str):
-    """停止调度直至 POST /enable；若正在运行则先终止。"""
+    """关闭循环执行；若正在运行则先终止。"""
     try:
         data = await app.state.scheduler.disable_schedule(script_id)
         return {"ok": True, "item": data}
@@ -378,12 +378,14 @@ async def stop_script(script_id: str):
 
 @app.post("/api/scripts/{script_id}/enable")
 async def enable_script(script_id: str):
-    """恢复定时与手动触发。"""
+    """开启循环执行（按 config schedule 周期自动跑）。"""
     try:
         data = await app.state.scheduler.enable_schedule(script_id)
         return {"ok": True, "item": data}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/scripts/{script_id}/clear-logs")

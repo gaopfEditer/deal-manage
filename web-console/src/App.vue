@@ -17,6 +17,9 @@
               <el-tag :type="statusType(item)">{{ statusText(item) }}</el-tag>
             </div>
             <div class="meta">上次运行: {{ item.last_run_time || "-" }}</div>
+            <div v-if="item.schedule_enabled && item.schedule?.seconds" class="meta">
+              循环间隔: {{ formatScriptInterval(item.schedule.seconds) }}
+            </div>
             <div class="meta">上次退出码: {{ item.last_exit_code ?? "-" }}</div>
             <div v-if="item.last_error" class="meta">错误: {{ item.last_error }}</div>
             <div class="meta">回调时间: {{ item.last_callback_time || "-" }}</div>
@@ -30,35 +33,35 @@
               <el-button
                 size="small"
                 type="primary"
-                :disabled="item.schedule_enabled === false"
+                :disabled="item.status === 'running'"
                 @click="runFetch(item)"
               >
-                立即执行
+                执行一次
               </el-button>
               <el-button
-                v-if="item.schedule_enabled !== false"
+                v-if="!item.schedule_enabled"
                 size="small"
-                type="warning"
-                :disabled="item.status !== 'running'"
-                @click="pauseTask(item)"
+                type="success"
+                :disabled="!canLoopScript(item)"
+                @click="startLoopTask(item)"
               >
-                暂停
-              </el-button>
-              <el-button
-                v-if="item.schedule_enabled !== false"
-                size="small"
-                type="danger"
-                @click="stopTask(item)"
-              >
-                停止
+                循环执行
               </el-button>
               <el-button
                 v-else
                 size="small"
-                type="success"
-                @click="enableTask(item)"
+                type="warning"
+                @click="stopLoopTask(item)"
               >
-                开启
+                关闭循环
+              </el-button>
+              <el-button
+                size="small"
+                type="danger"
+                :disabled="item.status !== 'running'"
+                @click="pauseTask(item)"
+              >
+                暂停
               </el-button>
               <el-button size="small" @click="openSearch(item)">搜索</el-button>
               <el-button size="small" type="info" @click="openDrawer(item)">实时控制台</el-button>
@@ -2700,16 +2703,32 @@ function draftKey(scriptId) {
   return `memo_draft:${scriptId}`;
 }
 
+function formatScriptInterval(seconds) {
+  const s = Number(seconds) || 0;
+  if (s <= 0) return "-";
+  if (s < 60) return `${s} 秒`;
+  if (s < 3600) return `${Math.round(s / 60)} 分钟`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)} 小时`;
+  return `${(s / 86400).toFixed(1)} 天`;
+}
+
+function canLoopScript(item) {
+  const sch = item?.schedule || {};
+  return sch.mode === "interval" && Number(sch.seconds) > 0;
+}
+
 function statusText(item) {
-  if (item?.schedule_enabled === false) return "已停止";
-  const m = { online: "在线", running: "运行中", error: "异常" };
-  return m[item?.status] || item?.status || "-";
+  if (item?.status === "running") return "运行中";
+  if (item?.status === "error") return "异常";
+  if (item?.schedule_enabled) return "循环中";
+  return "待机";
 }
 
 function statusType(item) {
-  if (item?.schedule_enabled === false) return "info";
-  const m = { online: "success", running: "warning", error: "danger" };
-  return m[item?.status] || "info";
+  if (item?.status === "running") return "warning";
+  if (item?.status === "error") return "danger";
+  if (item?.schedule_enabled) return "success";
+  return "info";
 }
 
 function formatResult(result) {
@@ -3071,6 +3090,44 @@ async function waitScriptDone(scriptId, timeoutSeconds = 1800) {
   return false;
 }
 
+async function startLoopTask(item) {
+  if (!canLoopScript(item)) {
+    ElMessage.warning("该脚本未配置有效的 interval 调度，无法循环执行");
+    return;
+  }
+  const res = await fetch(`/api/scripts/${item.id}/enable`, { method: "POST" });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    ElMessage.error(data?.detail || "开启循环失败");
+  } else {
+    ElMessage.success(`已开启循环（间隔 ${formatScriptInterval(item.schedule?.seconds)}）`);
+  }
+  openDrawer(item);
+  await loadCards();
+}
+
+async function stopLoopTask(item) {
+  const res = await fetch(`/api/scripts/${item.id}/stop`, { method: "POST" });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    ElMessage.error(data?.detail || "关闭循环失败");
+  } else {
+    ElMessage.success("已关闭循环执行");
+  }
+  openDrawer(item);
+  await loadCards();
+}
+
 async function pauseTask(item) {
   const res = await fetch(`/api/scripts/${item.id}/pause`, { method: "POST" });
   if (!res.ok) {
@@ -3085,39 +3142,6 @@ async function pauseTask(item) {
     ElMessage.success("已暂停本次运行");
   }
   openDrawer(item);
-  await loadCards();
-}
-
-async function stopTask(item) {
-  const res = await fetch(`/api/scripts/${item.id}/stop`, { method: "POST" });
-  if (!res.ok) {
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      // ignore
-    }
-    ElMessage.error(data?.detail || "停止失败");
-  } else {
-    ElMessage.success("已停止，点击「开启」后恢复调度");
-  }
-  openDrawer(item);
-  await loadCards();
-}
-
-async function enableTask(item) {
-  const res = await fetch(`/api/scripts/${item.id}/enable`, { method: "POST" });
-  if (!res.ok) {
-    let data = null;
-    try {
-      data = await res.json();
-    } catch {
-      // ignore
-    }
-    ElMessage.error(data?.detail || "开启失败");
-  } else {
-    ElMessage.success("已开启调度");
-  }
   await loadCards();
 }
 

@@ -27,7 +27,7 @@ from .telegram_service import (
 @dataclass
 class ScriptRuntime:
     status: str = "online"  # online | running | error
-    schedule_enabled: bool = True  # False = 停止调度，直至开启
+    schedule_enabled: bool = False  # False = 未开启循环；仅手动执行一次
     last_run_time: str | None = None
     last_exit_code: int | None = None
     last_error: str | None = None
@@ -153,10 +153,8 @@ class ScriptScheduler:
         if script_id not in self._scripts:
             raise KeyError(f"Script '{script_id}' not found")
         runtime = self._runtime[script_id]
-        if not runtime.schedule_enabled:
-            await runtime.log_queue.put(
-                f"[{self._now()}] Script schedule disabled, skip action={action!r}"
-            )
+        # 仅周期触发受 schedule_enabled 控制；手动 fetch/search 始终可用
+        if action == "interval" and not runtime.schedule_enabled:
             return
         async with self._lock:
             runtime = self._runtime[script_id]
@@ -187,33 +185,42 @@ class ScriptScheduler:
         return out
 
     async def disable_schedule(self, script_id: str) -> dict[str, Any]:
-        """停止：关闭调度直至开启；若正在运行则先终止当前任务。"""
+        """关闭循环执行；若正在运行则先终止当前任务。"""
         if script_id not in self._scripts:
             raise KeyError(f"Script '{script_id}' not found")
         runtime = self._runtime[script_id]
         runtime.schedule_enabled = False
-        await runtime.log_queue.put(
-            f"[{self._now()}] Schedule disabled until enabled (开启)."
-        )
+        await runtime.log_queue.put(f"[{self._now()}] Loop schedule disabled.")
         out = await self._halt_current_run(script_id)
         out["schedule_enabled"] = False
         return out
 
     async def enable_schedule(self, script_id: str) -> dict[str, Any]:
-        """开启：恢复定时与手动触发。"""
+        """开启循环执行：按 config 中的 schedule 周期自动触发。"""
         if script_id not in self._scripts:
             raise KeyError(f"Script '{script_id}' not found")
         runtime = self._runtime[script_id]
+        script_cfg = self._scripts[script_id]
+        schedule = script_cfg.get("schedule", {})
+        mode = schedule.get("mode")
+        seconds = int(schedule.get("seconds", 0) or 0)
+        if mode != "interval" or seconds <= 0:
+            raise ValueError(
+                f"脚本未配置有效的 interval 调度（schedule.mode=interval 且 seconds>0），无法开启循环"
+            )
         runtime.schedule_enabled = True
         if runtime.status == "running" and (
             runtime.process is None or runtime.process.poll() is not None
         ):
             runtime.status = "online"
-        await runtime.log_queue.put(f"[{self._now()}] Schedule enabled.")
+        await runtime.log_queue.put(
+            f"[{self._now()}] Loop schedule enabled, interval={seconds}s."
+        )
         return {
             "script_id": script_id,
             "schedule_enabled": True,
             "status": runtime.status,
+            "interval_seconds": seconds,
         }
 
     async def stop(self, script_id: str) -> dict[str, Any]:
