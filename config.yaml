@@ -67,6 +67,19 @@ projects:
         schedule:
           mode: interval
           seconds: 6000000
+  
+  - id: whisper
+    name: Whisper
+    script_path: '/Users/maotouying/frontend/code/1.operations/WhisprRT'
+    venv_path: "venv"
+    scripts:
+      - id: whisper
+        name: Whisper
+        icon: "🛰"
+        run: "python batch_whisperx_nodownload.py"
+        schedule:
+          mode: interval
+          seconds: 6000000
 
 # 与「CDP」页对应：先结束占用 remote_debugging_port 的进程，再启动 Chrome（一目录一账号环境）
 cdp_profiles:

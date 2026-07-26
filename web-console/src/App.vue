@@ -728,7 +728,12 @@
             style="width: 220px"
           >
             <el-option label="全部键" value="" />
-            <el-option v-for="k in dataPostsGroupKeys" :key="k" :label="k" :value="k" />
+            <el-option
+              v-for="k in dataPostsGroupKeys"
+              :key="k"
+              :label="AUTHOR_DISPLAY_MAP[k] || k"
+              :value="k"
+            />
           </el-select>
           <el-select v-model="currentDataPostsStarFilter" placeholder="按星级筛选" style="width: 180px">
             <el-option label="全部星级" value="all" />
@@ -853,7 +858,7 @@
               </div>
             </div>
             <div class="data-post-foot">
-              <span v-if="row.author">{{ row.author }}</span>
+              <span v-if="displayAuthorName(row)">{{ displayAuthorName(row) }}</span>
               <span v-if="row.category">{{ row.category }}</span>
               <span v-if="row.published_at">{{ row.published_at }}</span>
             </div>
@@ -988,6 +993,11 @@ const dataPostsGeneratedAt = ref("");
 const dataPostsPlatformLabels = ref(null);
 /** 与 config data_views[].id 一致：币安状态文件为 posts 嵌套 dict 结构 */
 const BINANCE_POSTS_VIEW_ID = "binance-posts-state";
+/** 币安作者 slug → 显示名 */
+const AUTHOR_DISPLAY_MAP = {
+  "square-creator-92912a51e": "打龟佬",
+  "square-creator-1d148bbce7461": "摩托crypto",
+};
 const dataPostsStarFilterByView = ref({});
 const dataPostsBinanceAuthorByView = ref({});
 const dataPostsGroupKeys = ref([]);
@@ -2615,6 +2625,12 @@ function normalizePostRow(raw) {
   return row;
 }
 
+function displayAuthorName(row) {
+  const raw = String(row?.author || row?._author_slug || row?.author_slug || "").trim();
+  if (!raw) return "";
+  return AUTHOR_DISPLAY_MAP[raw] || raw;
+}
+
 function getPostOpenUrl(row) {
   if (!row) return "";
   const cached = row._open_url == null ? "" : String(row._open_url).trim();
@@ -2668,6 +2684,7 @@ const filteredDataPostsRows = computed(() => {
       row?.description,
       getSignalContent(row),
       row?.author,
+      displayAuthorName(row),
       row?.category,
       getPostOpenUrl(row),
       row?._author_slug,
