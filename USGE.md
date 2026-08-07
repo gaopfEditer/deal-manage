@@ -176,6 +176,57 @@ curl -s -X POST http://127.0.0.1:8000/api/publish/signal \
 
 成功发布时响应含 `publish_item.post_url`（币安广场帖子链接）。需配置 `BINANCE_SQUARE_API_KEY` 或 `config.yaml` → `publish.platforms`。
 
+### WhisprRT 流转写（URL → 文稿路径）
+
+启动 deal-manage 后端后，可通过 API 调用兄弟项目 **`WhisprRT/batch_whisperx_nodownload.py`**：传入视频 URL 与标题，拉流转写（可选 Qwen 整理），并返回生成文件的绝对路径。
+
+配置见 `config.yaml` 顶层 **`whisper`**，或环境变量：
+
+| 变量 / 配置 | 说明 |
+|-------------|------|
+| `whisper.root` / `WHISPRT_ROOT` | WhisprRT 项目根目录（默认 `../WhisprRT`） |
+| `whisper.python` / `WHISPRT_PYTHON` | 执行脚本的 Python（默认自动用 WhisprRT `.venv`） |
+| `whisper.timeout_seconds` / `WHISPRT_TIMEOUT_SECONDS` | 单次超时秒数，默认 3600 |
+| `whisper.force_cpu` / `WHISPRT_CPU` | 强制 CPU 转写 |
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/whisper/config` | 查看解析到的 root / python / 超时 |
+| POST | `/api/whisper/transcribe` | 转写并返回文件路径 |
+
+**`POST /api/whisper/transcribe` 请求体：**
+
+- `url`（必填）：视频链接
+- `title` 或 `name`（可选）：输出文件名（不含扩展名）；缺省从 URL 推断
+- `force`（可选）：同名成品已存在时是否强制重跑，默认 `false`
+- `force_cpu`（可选）：本次是否强制 CPU
+
+**示例：**
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:8000/api/whisper/transcribe' \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/watch?v=xxxx","title":"示例标题"}'
+```
+
+成功时响应大致为：
+
+```json
+{
+  "ok": true,
+  "status": "success",
+  "name": "示例标题",
+  "url": "https://...",
+  "paths": {
+    "transcript": ".../WhisprRT/subtitles/示例标题.txt",
+    "log": ".../WhisprRT/logs/示例标题.txt",
+    "refined": ".../WhisprRT/output/示例标题.txt"
+  }
+}
+```
+
+`refined` 为 Qwen 整理后的「摘要 + 全文」；若 AI 整理失败，仍可能只有 `transcript`。同名文件已存在且未传 `force` 时返回 `status: skipped_existing`。转写较慢，请加大客户端超时。
+
 ## 前端（Vue 3 + Element Plus）
 
 ```bash

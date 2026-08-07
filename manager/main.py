@@ -20,6 +20,7 @@ from .local_ollama import router as local_ollama_router
 from .publish_router import router as publish_router
 from .telegram_router import router as telegram_router
 from .task_router import router as task_router
+from .whisper_router import router as whisper_router
 from .task_reminder_loop import run_task_reminder_loop
 from .cdp_control import kill_and_start_chrome
 from .data_views_service import (
@@ -110,6 +111,7 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
         merged.setdefault("data_views", merged.get("data_views") or [])
         merged.setdefault("publish", cfg.get("publish") or {})
         merged.setdefault("telegram", cfg.get("telegram") or {})
+        merged.setdefault("whisper", cfg.get("whisper") or {})
         return merged
 
     normalized: list[dict[str, Any]] = []
@@ -158,12 +160,20 @@ def _normalize_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "data_views": list(cfg.get("data_views") or []),
         "publish": cfg.get("publish") or {},
         "telegram": cfg.get("telegram") or {},
+        "whisper": cfg.get("whisper") or {},
     }
 
 
 def load_config() -> dict[str, Any]:
     if not CONFIG_PATH.exists():
-        return {"scripts": [], "cdp_profiles": [], "data_views": [], "publish": {}, "telegram": {}}
+        return {
+            "scripts": [],
+            "cdp_profiles": [],
+            "data_views": [],
+            "publish": {},
+            "telegram": {},
+            "whisper": {},
+        }
     with CONFIG_PATH.open("r", encoding="utf-8") as file:
         cfg = yaml.safe_load(file) or {}
     return _normalize_config(cfg)
@@ -192,6 +202,7 @@ app.include_router(local_ollama_router)
 app.include_router(publish_router)
 app.include_router(telegram_router)
 app.include_router(task_router)
+app.include_router(whisper_router)
 app.mount("/web", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 

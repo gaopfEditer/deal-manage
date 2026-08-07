@@ -25,26 +25,49 @@
 
 - 配置中的 **`data_views`** 与脚本产出数据关联，用于在控制台中 **浏览、统计** 抓取结果（实现见 **`manager/data_views_service.py`** 及相关 API）。
 
-### 5. Telegram 推送（非群监控）
-
-- 顶层 **`telegram`** 配置统一 **Bot Token**（或环境变量 **`TELEGRAM_BOT_TOKEN`**），**`chats`** 登记群组别名与 `chat_id`。
-- 脚本仅需 **`send_to_telegram: true`** + **`telegram_chat: <别名>`**（或兼容 **`telegram_chat_id`** 数值 id）。
-- 外部调用 **`POST /api/telegram/send`**，body：`{ "chat_id": "<别名或群组id>", "text": "消息正文" }`。
-- **`GET /api/telegram/config`** 可查看已登记群组（不返回完整 token）。
-- **不包含** 监听 Telegram 群消息、Webhook 收消息等入站逻辑。
-
-### 6. 内置 AI HTTP 接口（非简单转发网关形态）
-
-- **`manager/main.py`** 挂载路由：例如 **Gemini**（`/gemini/chat`、`/gemini/image`）、**通义千问**（`/qwen/chat`）等；密钥通过 **`.env`** 注入（可参考仓库内 **`.env.example`**）。
-
-### 7. Remotion：JSON 驱动短视频（子项目）
+### 5. Remotion：JSON 驱动短视频（子项目）
 
 - 目录 **`remotion/`**：根据 **`public/*.json`** 工程描述（时间轴、图表层、文案等）生成 **竖屏类演示视频**，支持多 Composition 注册（见 **`remotion/src/projectRegistry.ts`**）。
 - 与主系统的调度无强制绑定，可作为 **独立 `pnpm dev` / `pnpm render`** 的可视化导出工具使用。
 
-### 8. 其他后端能力
+---
 
-- **上游代理 / 本地 Ollama** 等路由分模块挂载（`upstream_proxy`、`local_ollama`），便于扩展本地模型或统一出口。
+## 服务维护清单
+
+主进程入口：**`manager/main.py`**（`uvicorn` / `python run.py`）。下列能力挂在同一 FastAPI 进程内，不是多个独立 daemon。接口细节见 **`USGE.md`**。
+
+### FastAPI 内常驻能力
+
+| 服务 | 模块 | 主要路径 / 行为 | 配置 / 依赖 |
+|------|------|-----------------|-------------|
+| **脚本调度** | `scheduler.py` | `/api/scripts/*`：启停、抓取、搜索、日志 SSE、结果回调 | `config.yaml`（或 `RUN_ENV` 对应 YAML） |
+| **Telegram 通知** | `telegram_router.py` / `telegram_service.py` | `/api/telegram/config`、`POST /api/telegram/send`；脚本跑完可自动推高星帖 | `telegram.bot_token` 或 `TELEGRAM_BOT_TOKEN`；`telegram.chats` 别名；脚本侧 `send_to_telegram` + `telegram_chat`。**无入站监听 / Webhook** |
+| **Ollama 本地代理** | `local_ollama.py` | `POST /ollama/chat`、`POST /ollama/chat-image` → 本机 Ollama `/api/generate` | `ollama_local.yaml`（或 `OLLAMA_LOCAL_CONFIG`）；需本机 Ollama 已运行 |
+| **上游 AI 代理** | `upstream_proxy.py` | `POST /gemini/chat`、`/gemini/image`、`/qwen/chat` | `.env` 中的 Gemini / Qwen 密钥 |
+| **发布服务** | `publish_router.py` / `publish_service.py` | `/api/publish/*`：提示词、润色、信号发布、历史与附件 | `publish` 配置、`BINANCE_SQUARE_API_KEY` 等；润色走 Ollama |
+| **任务服务** | `task_router.py` / `task_service.py` | `/api/tasks/*` CRUD、提醒查询；启动时跑 `task_reminder_loop` | 后端 `manager/state/tasks.json`；控制台当前可优先用前端 localStorage |
+| **数据视图** | `data_views_service.py` | `/api/data-views`、帖子列表、已浏览标记 | `config.yaml` → `data_views` |
+| **CDP / Chrome** | `cdp_control.py` | `/api/cdp/profiles`、`POST /api/cdp/restart` | `cdp_profiles`；脚本可标 `cdp: true` |
+| **Web 控制台静态托管** | `manager/web/` | `/`、`/web`、`/assets` | 由 `web-console` 执行 `npm run build` 产出 |
+| **Memos 同步** | 挂在脚本 API | `POST /api/scripts/{id}/sync-memos` | 脚本配置 `to_memos`（非独立对外服务） |
+| **WhisprRT 转写** | `whisper_router.py` / `whisper_service.py` | `GET /api/whisper/config`、`POST /api/whisper/transcribe`：传 URL/标题，子进程跑 WhisprRT 脚本，返回 `subtitles`/`output`/`logs` 路径 | `config.yaml` → `whisper`，或 `WHISPRT_ROOT` / `WHISPRT_PYTHON`；依赖兄弟目录 `WhisprRT/batch_whisperx_nodownload.py` |
+
+### 仓库内、非本 FastAPI 进程
+
+| 组件 | 位置 | 说明 |
+|------|------|------|
+| **本机 Ollama** | 外部进程 | 默认 `http://localhost:11434`；本仓库只做 HTTP 代理 |
+| **业务脚本** | `scripts/*.py` 及各项目 `script_path` | 由调度器按需拉起子进程，非常驻 HTTP |
+| **WhisprRT** | 默认 `../WhisprRT` | faster-whisper 流转写 + Qwen 整理；由本仓库 API 按需拉起 |
+| **Mac Studio 监控** | `macstudio/` | bash + launchd 采集/周月统计，与 Web 主服务分离 |
+| **Remotion** | `remotion/` | 可选独立前端渲染工程 |
+
+### 维护注意
+
+- **扩路由**：在 `manager/main.py` 的 `app.include_router(...)` 注册；生命周期后台任务写在 `lifespan`（当前有调度周期任务 + 任务提醒循环）。
+- **密钥**：Telegram / Gemini / Qwen / 发布平台等勿入库；用 `.env` 或本地 YAML，泄露后轮换。
+- **配置切换**：`RUN_ENV=mac|win` 切换机器配置文件；Ollama 用 `OLLAMA_LOCAL_CONFIG`。
+- **前后端**：日常开发可 `python run.py`；仅后端则 `uvicorn manager.main:app --reload`。生产静态页需先 `cd web-console && npm run build`。
 
 ---
 
@@ -82,14 +105,16 @@ python run.py
 
 ```
 deal-manage/
-├── manager/           # FastAPI 应用、调度器、静态托管、数据视图等
+├── manager/           # FastAPI：调度、Telegram、Ollama、发布、任务、数据视图、CDP、静态托管
 ├── web-console/       # 控制台前端源码
 ├── remotion/          # JSON 驱动 Remotion 工程（可选）
+├── macstudio/         # Mac 监控采集（与主 Web 服务分离）
 ├── run.py             # 本地一键启动脚本
-├── config.yaml        # 主配置示例（项目 + 脚本 + data_views 等）
+├── config.yaml        # 主配置（项目 + 脚本 + telegram + publish + data_views 等）
+├── ollama_local.yaml  # 本地 Ollama 代理配置
 ├── requirements.txt
-├── USGE.md            # 使用说明（详细）
-└── README.md          # 本文件
+├── USGE.md            # 使用说明与接口示例（详细）
+└── README.md          # 本文件（含服务维护清单）
 ```
 
-如有新同事接入，优先阅读 **本 README 了解能力边界**，再按 **USGE.md** 搭环境。
+如有新同事接入，优先阅读 **本 README 了解能力边界与服务清单**，再按 **USGE.md** 搭环境与调接口。
