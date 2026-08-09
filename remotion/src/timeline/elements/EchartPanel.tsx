@@ -4,7 +4,7 @@ import React, { useLayoutEffect, useMemo, useRef } from "react";
  * 显式指向 UMD 入口更稳（与 npm 包内 dist 一致）。
  */
 import * as echarts from "echarts/dist/echarts.js";
-import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import type { EchartPanelLayer } from "../../lib/types";
 import { resolveSemanticPosition } from "../../lib/layout";
 import type { OhlcTuple } from "./echartKlineHelpers";
@@ -55,6 +55,7 @@ function buildSeriesData(
 
 export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const ref = useRef<HTMLDivElement>(null);
   const inst = useRef<echarts.ECharts | null>(null);
 
@@ -91,7 +92,12 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
     }
   }
 
-  const progress = interpolate(frame, [0, Math.max(1, durationInFrames - 1)], [0, 1], {
+  const settlementHoldFrames =
+    isTradingView && tvPreset?.signal?.settlement
+      ? Math.round(tvPreset.signal.settlement.holdSeconds * fps)
+      : 0;
+  const chartAnimFrames = Math.max(1, durationInFrames - settlementHoldFrames);
+  const progress = interpolate(frame, [0, Math.max(1, chartAnimFrames - 1)], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -108,6 +114,7 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
           vegasChannel,
           shootingStar,
           extraCallouts: callouts,
+          bollinger: tradingViewData?.bollinger,
         }),
       };
     }
@@ -319,6 +326,7 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
     shootingStar,
     isTradingView,
     tvPreset,
+    tradingViewData?.bollinger,
     callouts,
     totalPoints,
   ]);
@@ -347,8 +355,51 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
   }, []);
 
   if (isTradingView && tvPreset && (fullscreen || tradingViewStyle)) {
-    const changeColor = tvPreset.change < 0 ? "#ef5350" : "#26a69a";
-    const changeSign = tvPreset.change >= 0 ? "+" : "";
+    // 头部价格随 K 线推进更新：约 5Hz 取档，避免每帧乱跳又保持可读
+    const tickEvery = Math.max(4, Math.round(fps / 5));
+    const tickFrame = Math.min(
+      chartAnimFrames - 1,
+      Math.floor(frame / tickEvery) * tickEvery
+    );
+    const tickProgress = interpolate(
+      tickFrame,
+      [0, Math.max(1, chartAnimFrames - 1)],
+      [0, 1],
+      { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+    );
+    const liveIdx = Math.min(
+      tvPreset.ohlc.length - 1,
+      Math.max(0, Math.ceil(tvPreset.ohlc.length * tickProgress) - 1)
+    );
+    const liveClose = tvPreset.ohlc[liveIdx][1];
+    const openRef = tvPreset.ohlc[0][1];
+    const liveChange =
+      Math.round((liveClose - openRef) * 100) / 100;
+    const liveChangePercent =
+      openRef === 0
+        ? 0
+        : Math.round((liveChange / openRef) * 10000) / 100;
+    const changeColor = liveChange < 0 ? "#ef5350" : "#26a69a";
+    const changeSign = liveChange >= 0 ? "+" : "";
+    const settlement = tvPreset.signal?.settlement;
+    // 片尾 holdSeconds 内展示结算卡（默认 5s）
+    const fadeIn = Math.min(12, Math.max(4, Math.floor(settlementHoldFrames * 0.15)));
+    const settlementOpacity = settlement
+      ? interpolate(
+          frame,
+          [chartAnimFrames, chartAnimFrames + fadeIn],
+          [0, 1],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        )
+      : 0;
+    const pnlColor =
+      settlement && settlement.profit >= 0 ? "#26a69a" : "#ef5350";
+    const fmtSignedMoney = (n: number) =>
+      `${n >= 0 ? "+" : "-"}$${Math.abs(n).toLocaleString("en-US", {
+        maximumFractionDigits: 2,
+      })}`;
+    const fmtSignedPct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+
     return (
       <AbsoluteFill
         style={{
@@ -372,20 +423,87 @@ export const EchartPanel: React.FC<Props> = ({ layer, durationInFrames }) => {
             <span style={{ fontSize: 22, color: "#787b86" }}>{tvPreset.timeframe}</span>
           </div>
           <div style={{ marginTop: 10, display: "flex", alignItems: "baseline", gap: 16 }}>
-            <span style={{ fontSize: 48, fontWeight: 700, color: "#26a69a" }}>
-              {tvPreset.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            <span style={{ fontSize: 48, fontWeight: 700, color: changeColor }}>
+              {liveClose.toLocaleString("en-US", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
             </span>
             <span style={{ fontSize: 26, color: changeColor, fontWeight: 600 }}>
               {changeSign}
-              {tvPreset.change.toFixed(2)} ({changeSign}
-              {tvPreset.changePercent.toFixed(2)}%)
+              {liveChange.toFixed(2)} ({changeSign}
+              {liveChangePercent.toFixed(2)}%)
             </span>
           </div>
           <div style={{ marginTop: 8, fontSize: 20, color: "#787b86" }}>
             {title || tvPreset.vegasLegend}
           </div>
         </div>
-        <div ref={ref} style={{ flex: 1, width: "100%", minHeight: 0 }} />
+        <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
+          <div ref={ref} style={{ width: "100%", height: "100%" }} />
+          {settlement && settlementOpacity > 0.01 ? (
+            <div
+              style={{
+                position: "absolute",
+                right: 28,
+                bottom: 36,
+                minWidth: 280,
+                padding: "18px 22px",
+                borderRadius: 12,
+                background: "rgba(15, 20, 28, 0.92)",
+                border: `1px solid ${pnlColor}66`,
+                boxShadow: `0 12px 40px rgba(0,0,0,0.45), 0 0 0 1px ${pnlColor}22`,
+                opacity: settlementOpacity,
+                transform: `translateY(${(1 - settlementOpacity) * 16}px)`,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 18,
+                  fontWeight: 700,
+                  color: "#d1d4dc",
+                  marginBottom: 12,
+                  letterSpacing: 2,
+                }}
+              >
+                {settlement.label}
+              </div>
+              {[
+                {
+                  k: "开仓价值",
+                  v: `$${settlement.entryValue.toLocaleString("en-US", {
+                    maximumFractionDigits: 2,
+                  })}`,
+                  c: "#d1d4dc",
+                },
+                {
+                  k: "收获",
+                  v: fmtSignedMoney(settlement.profit),
+                  c: pnlColor,
+                },
+                {
+                  k: "收益率",
+                  v: fmtSignedPct(settlement.returnPercent),
+                  c: pnlColor,
+                },
+              ].map((row) => (
+                <div
+                  key={row.k}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                    gap: 24,
+                    marginTop: 8,
+                  }}
+                >
+                  <span style={{ fontSize: 16, color: "#787b86" }}>{row.k}</span>
+                  <span style={{ fontSize: 22, fontWeight: 700, color: row.c }}>{row.v}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </AbsoluteFill>
     );
   }

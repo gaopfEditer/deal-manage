@@ -32,6 +32,38 @@ export function computeEma(values: number[], period: number): (number | null)[] 
   return out;
 }
 
+/** 布林带：中轨 SMA，上下轨 = 中轨 ± stdDev × 标准差 */
+export function computeBollinger(
+  values: number[],
+  period = 20,
+  stdDev = 2
+): {
+  mid: (number | null)[];
+  upper: (number | null)[];
+  lower: (number | null)[];
+} {
+  const mid: (number | null)[] = [];
+  const upper: (number | null)[] = [];
+  const lower: (number | null)[] = [];
+  const p = Math.max(2, Math.min(period, values.length));
+  for (let i = 0; i < values.length; i++) {
+    if (i < p - 1) {
+      mid.push(null);
+      upper.push(null);
+      lower.push(null);
+      continue;
+    }
+    const slice = values.slice(i - p + 1, i + 1);
+    const mean = slice.reduce((a, b) => a + b, 0) / p;
+    const variance = slice.reduce((a, b) => a + (b - mean) ** 2, 0) / p;
+    const std = Math.sqrt(variance);
+    mid.push(Math.round(mean * 10000) / 10000);
+    upper.push(Math.round((mean + stdDev * std) * 10000) / 10000);
+    lower.push(Math.round((mean - stdDev * std) * 10000) / 10000);
+  }
+  return { mid, upper, lower };
+}
+
 /**
  * 简易「射击之星」启发式：上影显著、实体小、位于局部高位附近。
  * 仅用于演示自动化；专业场景请用 indices 由上游量化引擎给出。

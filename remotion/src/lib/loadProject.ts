@@ -1,7 +1,9 @@
 import type { VideoProject } from "./types";
 
 export async function loadProjectFromUrl(url: string): Promise<VideoProject> {
-  const res = await fetch(url);
+  // 避开浏览器/Studio 对 public JSON 的缓存，改 sample-project 后才能立刻生效
+  const bust = url.includes("?") ? `${url}&_=${Date.now()}` : `${url}?_=${Date.now()}`;
+  const res = await fetch(bust, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Failed to load project JSON: ${res.status} ${url}`);
   }

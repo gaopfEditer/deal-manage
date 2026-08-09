@@ -3,7 +3,10 @@ import type { CalculateMetadataFunction } from "remotion";
 import { staticFile } from "remotion";
 import { getAudioDurationInSeconds } from "@remotion/media-utils";
 import { Timeline } from "../timeline/Timeline";
+import { applyProjectTrade } from "../lib/applyProjectTrade";
+import { hydrateProjectTradingViewData } from "../lib/hydrateTradingViewData";
 import { assertProjectShape, loadProjectFromUrl } from "../lib/loadProject";
+import { resolveTradeFromBars } from "../lib/resolveTradeFromBars";
 import { resolveAudioSrc } from "../lib/resolveAudioSrc";
 import type { VideoProject } from "../lib/types";
 
@@ -21,8 +24,11 @@ export const calculateJsonDrivenMetadata: CalculateMetadataFunction<JsonDrivenPr
   compositionId,
 }) => {
   const url = props.projectJsonUrl?.trim() || staticFile("sample-project.json");
-  const project = await loadProjectFromUrl(url);
+  let project = await loadProjectFromUrl(url);
   assertProjectShape(project);
+  project = applyProjectTrade(project);
+  project = await hydrateProjectTradingViewData(project);
+  project = resolveTradeFromBars(project);
 
   const fps = Math.max(1, project.metadata.fps);
   let durationInFrames = Math.max(1, project.metadata.durationInFrames);

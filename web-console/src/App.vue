@@ -399,6 +399,136 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="Whisper" name="whisper">
+        <div class="whisper-layout">
+          <el-card shadow="never" class="whisper-form-card">
+            <template #header>
+              <div class="whisper-card-head">
+                <span>本服务 Whisper 转写</span>
+                <el-button size="small" text :loading="whisperConfigLoading" @click="loadWhisperConfig">
+                  刷新配置
+                </el-button>
+              </div>
+            </template>
+            <div class="whisper-config-meta" v-if="whisperConfig">
+              <div class="meta">
+                服务状态:
+                <el-tag size="small" :type="whisperConfig.engine_ready ? 'success' : 'danger'">
+                  {{ whisperConfig.engine_ready ? "就绪" : "未就绪" }}
+                </el-tag>
+                · 超时 {{ whisperConfig.timeout_seconds || "-" }}s
+                · CPU {{ whisperConfig.force_cpu ? "开" : "关" }}
+              </div>
+              <div class="meta cdp-path">成品目录: {{ whisperConfig.output_dir || "-" }}</div>
+            </div>
+
+            <el-form label-position="top" class="whisper-form" @submit.prevent="submitWhisperTranscribe">
+              <el-form-item label="音频 / 视频 URL" required>
+                <el-input
+                  v-model="whisperUrl"
+                  clearable
+                  placeholder="例如 https://www.binance.com/zh-CN/square/audio/replay?id=..."
+                  @change="onWhisperUrlChange"
+                  @blur="onWhisperUrlChange"
+                />
+              </el-form-item>
+              <el-form-item label="输出文件名（不含扩展名，可修改）" required>
+                <el-input
+                  v-model="whisperTitle"
+                  clearable
+                  placeholder="默认从 URL 的 id 推断"
+                  @input="whisperTitleTouched = true"
+                >
+                  <template #append>.txt</template>
+                </el-input>
+                <div class="whisper-name-hint">
+                  成品写入：
+                  <code>{{ whisperOutputFullPath }}</code>
+                </div>
+              </el-form-item>
+              <el-form-item label="选项">
+                <div class="whisper-opts">
+                  <el-checkbox v-model="whisperForce">强制重跑（覆盖已有同名文件）</el-checkbox>
+                  <el-checkbox v-model="whisperForceCpu">强制 CPU 转写</el-checkbox>
+                </div>
+              </el-form-item>
+              <el-form-item>
+                <el-button
+                  type="primary"
+                  :loading="whisperLoading"
+                  :disabled="!whisperUrl.trim() || !whisperTitle.trim()"
+                  @click="submitWhisperTranscribe"
+                >
+                  开始转写
+                </el-button>
+                <el-button :disabled="whisperLoading" @click="resetWhisperForm">清空</el-button>
+              </el-form-item>
+            </el-form>
+          </el-card>
+
+          <el-card shadow="never" class="whisper-result-card">
+            <template #header>
+              <div class="whisper-card-head">
+                <span>实时状态</span>
+                <div class="whisper-card-head-right">
+                  <el-tag v-if="whisperLoading" size="small" type="warning">转写中</el-tag>
+                  <el-tag
+                    v-else-if="whisperResult"
+                    size="small"
+                    :type="
+                      whisperResult.status === 'success'
+                        ? 'success'
+                        : whisperResult.status === 'skipped_existing'
+                          ? 'warning'
+                          : 'danger'
+                    "
+                  >
+                    {{ whisperResult.status || "-" }}
+                  </el-tag>
+                  <el-tag v-else size="small" type="info">待机</el-tag>
+                </div>
+              </div>
+            </template>
+
+            <div
+              ref="whisperLogEl"
+              class="whisper-live-log"
+              :class="{ empty: !whisperLiveLog }"
+            >
+              <pre>{{ whisperLiveLog || "点击「开始转写」后，进度日志会实时显示在这里…" }}</pre>
+            </div>
+
+            <template v-if="whisperResult">
+              <div class="meta" v-if="whisperResult.message">{{ whisperResult.message }}</div>
+              <div class="meta">文件名: {{ whisperResult.name || "-" }}</div>
+              <div class="meta cdp-path" v-if="whisperResult.output_dir || whisperResult.paths?.refined">
+                成品:
+                {{ whisperResult.paths?.refined || `${whisperResult.output_dir}/${whisperResult.name}.txt` }}
+              </div>
+              <div class="meta cdp-path" v-if="whisperResult.paths?.transcript">
+                原稿: {{ whisperResult.paths.transcript }}
+              </div>
+              <div class="meta cdp-path" v-if="whisperResult.paths?.log">
+                日志: {{ whisperResult.paths.log }}
+              </div>
+              <div class="whisper-content-label" v-if="whisperResult.content?.text">
+                文稿预览
+                <el-tag size="small" type="info">{{ whisperResult.content.kind || "text" }}</el-tag>
+                <el-tag v-if="whisperResult.content.truncated" size="small" type="warning">已截断</el-tag>
+              </div>
+              <el-input
+                v-if="whisperResult.content?.text"
+                type="textarea"
+                :rows="14"
+                readonly
+                :model-value="whisperResult.content.text"
+                class="whisper-content"
+              />
+            </template>
+          </el-card>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="任务" name="tasks">
         <div class="ts-cal">
           <header class="ts-cal-header">
@@ -983,6 +1113,76 @@ const dataViewBusyId = ref("");
 const dataPostsVisible = ref(false);
 const dataPostsViewId = ref("");
 const dataPostsLoading = ref(false);
+
+const whisperUrl = ref("");
+const whisperTitle = ref("");
+const whisperTitleTouched = ref(false);
+const whisperForce = ref(false);
+const whisperForceCpu = ref(false);
+const whisperLoading = ref(false);
+const whisperConfigLoading = ref(false);
+const whisperConfig = ref(null);
+const whisperResult = ref(null);
+const whisperLiveLog = ref("");
+const whisperLogEl = ref(null);
+const WHISPER_FORM_KEY = "deal-manage:whisper-form";
+
+const whisperTitlePreview = computed(() => {
+  const t = (whisperTitle.value || "").trim();
+  return t ? `${t}.txt` : "（未命名）.txt";
+});
+
+const whisperOutputFullPath = computed(() => {
+  const base =
+    (whisperConfig.value?.output_dir || "").replace(/\/+$/, "") ||
+    "/Users/maotouying/frontend/code/1.operations/WhisprRT/output";
+  return `${base}/${whisperTitlePreview.value}`;
+});
+
+function loadWhisperFormFromCache() {
+  try {
+    const raw = localStorage.getItem(WHISPER_FORM_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    const url = data?.url == null ? "" : String(data.url);
+    const title = data?.title == null ? "" : String(data.title);
+    if (url) whisperUrl.value = url;
+    if (title) {
+      whisperTitle.value = title;
+      whisperTitleTouched.value = true;
+    }
+  } catch {
+    // ignore broken cache
+  }
+}
+
+function saveWhisperFormToCache() {
+  try {
+    localStorage.setItem(
+      WHISPER_FORM_KEY,
+      JSON.stringify({
+        url: whisperUrl.value || "",
+        title: whisperTitle.value || "",
+      })
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+async function scrollWhisperLogToBottom() {
+  await nextTick();
+  const el = whisperLogEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function appendWhisperLog(line) {
+  const text = line == null ? "" : String(line);
+  whisperLiveLog.value = whisperLiveLog.value
+    ? `${whisperLiveLog.value}\n${text}`
+    : text;
+  scrollWhisperLogToBottom();
+}
 const dataPostsRows = ref([]);
 const dataPostsTotal = ref(0);
 const dataPostsVersion = ref(null);
@@ -2783,6 +2983,174 @@ function refreshAll() {
   loadPublishPlatforms();
   loadPublishPrompts();
   loadPublishHistory();
+  // Whisper 配置仅在 Whisper Tab 加载，避免异常时拖慢脚本列表
+}
+
+function guessWhisperTitleFromUrl(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    const id = (u.searchParams.get("id") || "").trim();
+    if (id) return id.slice(0, 120);
+    const seg = (u.pathname || "").replace(/\/+$/, "").split("/").pop() || "";
+    const cleaned = seg.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/\s+/g, "_").replace(/^_+|_+$/g, "");
+    return (cleaned || "video").slice(0, 120);
+  } catch {
+    return "video";
+  }
+}
+
+function onWhisperUrlChange() {
+  if (whisperTitleTouched.value && (whisperTitle.value || "").trim()) return;
+  whisperTitle.value = guessWhisperTitleFromUrl(whisperUrl.value);
+  whisperTitleTouched.value = false;
+}
+
+function resetWhisperForm() {
+  whisperUrl.value = "";
+  whisperTitle.value = "";
+  whisperTitleTouched.value = false;
+  whisperForce.value = false;
+  whisperForceCpu.value = false;
+  whisperResult.value = null;
+  whisperLiveLog.value = "";
+  try {
+    localStorage.removeItem(WHISPER_FORM_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+async function loadWhisperConfig() {
+  whisperConfigLoading.value = true;
+  try {
+    const res = await fetch("/api/whisper/config");
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(data?.detail || "读取 Whisper 配置失败");
+      return;
+    }
+    whisperConfig.value = data;
+  } finally {
+    whisperConfigLoading.value = false;
+  }
+}
+
+async function submitWhisperTranscribe() {
+  const url = (whisperUrl.value || "").trim();
+  const title = (whisperTitle.value || "").trim();
+  if (!url) {
+    ElMessage.warning("请填写音频 URL");
+    return;
+  }
+  if (!title) {
+    ElMessage.warning("请填写输出文件名");
+    return;
+  }
+  whisperLoading.value = true;
+  whisperResult.value = null;
+  whisperLiveLog.value = "";
+  appendWhisperLog(`>>> [deal-manage] 创建转写任务：${title}`);
+  appendWhisperLog(`>>> URL: ${url}`);
+  try {
+    const createRes = await fetch("/api/whisper/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        title,
+        force: !!whisperForce.value,
+        force_cpu: whisperForceCpu.value ? true : null,
+      }),
+    });
+    let created = null;
+    try {
+      created = await createRes.json();
+    } catch {
+      // ignore
+    }
+    if (!createRes.ok) {
+      const detail = created?.detail;
+      const msg =
+        typeof detail === "string"
+          ? detail
+          : detail?.message || created?.message || createRes.statusText || "创建转写任务失败";
+      appendWhisperLog(`❌ ${typeof msg === "string" ? msg : JSON.stringify(msg)}`);
+      ElMessage.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      return;
+    }
+    const jobId = created?.job_id;
+    if (!jobId) {
+      appendWhisperLog("❌ 本服务未返回 job_id");
+      ElMessage.error("未返回 job_id");
+      return;
+    }
+    appendWhisperLog(`>>> 本服务任务已受理 job_id=${jobId}`);
+    appendWhisperLog(">>> 开始接收本服务实时日志…");
+
+    await new Promise((resolve) => {
+      const es = new EventSource(`/api/whisper/jobs/${encodeURIComponent(jobId)}/events`);
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        es.close();
+        resolve();
+      };
+      es.onmessage = (ev) => {
+        let event = null;
+        try {
+          event = JSON.parse(ev.data);
+        } catch {
+          appendWhisperLog(ev.data);
+          return;
+        }
+        const type = event?.type;
+        if (type === "log") {
+          appendWhisperLog(event.line ?? "");
+          return;
+        }
+        if (type === "error") {
+          appendWhisperLog(`❌ ${event.message || "转写失败"}`);
+          ElMessage.error(event.message || "转写失败");
+          return;
+        }
+        if (type === "done") {
+          const result = event.result || {};
+          whisperResult.value = result;
+          appendWhisperLog(`>>> 结束：${result.status || "done"}`);
+          if (result.status === "skipped_existing") {
+            ElMessage.warning(result.message || "成品已存在，未重新转写");
+          } else if (result.ok) {
+            ElMessage.success(`转写完成：${result.name || title}`);
+          } else {
+            ElMessage.error(result.message || "转写失败");
+          }
+          return;
+        }
+        if (type === "end") {
+          finish();
+        }
+      };
+      es.onerror = () => {
+        if (!whisperResult.value && whisperLoading.value) {
+          appendWhisperLog(">>> 日志连接中断（若任务仍在跑，可刷新后根据成品文件确认）");
+        }
+        finish();
+      };
+    });
+  } catch (err) {
+    appendWhisperLog(`❌ 转写请求失败：${err?.message || err}`);
+    ElMessage.error(`转写请求失败：${err?.message || err}`);
+  } finally {
+    whisperLoading.value = false;
+  }
 }
 
 async function dataMarkAllSeen(item) {
@@ -3286,6 +3654,9 @@ watch(mainTab, (tab) => {
     loadPublishPrompts();
     loadPublishHistory();
   }
+  if (tab === "whisper") {
+    loadWhisperConfig();
+  }
   if (tab === "tasks") {
     syncTaskTodayLabel();
     if (!taskAnchor.value) taskAnchor.value = formatTaskDate(new Date());
@@ -3296,6 +3667,10 @@ watch(mainTab, (tab) => {
   }
 });
 
+watch([whisperUrl, whisperTitle], () => {
+  saveWhisperFormToCache();
+});
+
 watch(publishPlatform, () => {
   if (mainTab.value === "publish") loadPublishHistory();
 });
@@ -3304,6 +3679,7 @@ onMounted(() => {
   syncTaskTodayLabel();
   taskAnchor.value = formatTaskDate(new Date());
   loadTaskStoreFromCache();
+  loadWhisperFormFromCache();
   refreshAll();
   pollTimer = setInterval(() => loadCards(), 300000);
   startTaskReminderPoll();
@@ -3727,6 +4103,81 @@ body {
   grid-template-columns: 1fr min(360px, 32vw);
   gap: 16px;
   align-items: start;
+}
+
+.whisper-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 520px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .whisper-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.whisper-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.whisper-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.whisper-config-meta {
+  margin-bottom: 12px;
+}
+.whisper-form {
+  max-width: 100%;
+}
+.whisper-name-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
+}
+.whisper-name-hint code {
+  font-size: 12px;
+}
+.whisper-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+.whisper-live-log {
+  height: min(52vh, 520px);
+  overflow: auto;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0f1419;
+  border: 1px solid #1f2a36;
+  color: #d7e0ea;
+}
+.whisper-live-log.empty {
+  opacity: 0.75;
+}
+.whisper-live-log pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.whisper-content-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.whisper-content {
+  margin-top: 8px;
 }
 @media (max-width: 960px) {
   .publish-layout {

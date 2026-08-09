@@ -131,7 +131,7 @@ publish:
 # WhisprRT 流转写对外服务（调用兄弟目录 batch_whisperx_nodownload.py）
 # 也可用环境变量 WHISPRT_ROOT / WHISPRT_PYTHON / WHISPRT_TIMEOUT_SECONDS / WHISPRT_CPU 覆盖
 whisper:
-  root: "D:/frontend/main/1.operations/WhisprRT"
-  # python: "D:/frontend/main/1.operations/WhisprRT/.venv/Scripts/python.exe"
+  root: "/Users/maotouying/frontend/code/1.operations/WhisprRT"
+  # python: "/Users/maotouying/frontend/code/1.operations/WhisprRT/venv/bin/python"
   timeout_seconds: 3600
   force_cpu: false

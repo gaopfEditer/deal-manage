@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "remotion studio",
+    "dev": "node scripts/dev.mjs",
+    "dev:studio": "remotion studio --port 3008 --no-open",
+    "operate": "node scripts/dev.mjs",
+    "operate-tools": "node scripts/dev.mjs",
     "render": "remotion render src/index.ts json-eth-overview out/video.mp4 --codec=h264",
     "render:fast": "remotion render src/index.ts json-eth-overview out/video.mp4 --codec=h264 --concurrency=16",
     "typecheck": "tsc --noEmit"
@@ -20,6 +23,8 @@
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "typescript": "^5.6.3"
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
   }
 }

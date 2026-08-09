@@ -3,6 +3,7 @@ import { AbsoluteFill, Audio, Sequence } from "remotion";
 import { resolveAudioSrc } from "../lib/resolveAudioSrc";
 import type { VideoProject } from "../lib/types";
 import { TextAnnotation } from "./elements/TextAnnotation";
+import { PnlCover } from "./elements/PnlCover";
 import { AiAssistantCat } from "./elements/AiAssistantCat";
 import { IconBadge } from "./elements/IconBadge";
 import { EchartPanel } from "./elements/EchartPanel";
@@ -28,6 +29,8 @@ export const Timeline: React.FC<Props> = ({ project }) => {
           >
             {layer.type === "text_annotation" ? (
               <TextAnnotation layer={layer} />
+            ) : layer.type === "pnl_cover" ? (
+              <PnlCover layer={layer} durationInFrames={duration} />
             ) : layer.type === "ai_assistant_cat" ? (
               <AiAssistantCat layer={layer} />
             ) : layer.type === "icon_badge" ? (

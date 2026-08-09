@@ -166,6 +166,50 @@ def _wait_backend_ready(timeout_seconds: float = 60.0) -> bool:
     return False
 
 
+def _kill_port_process(port: int) -> None:
+    """尽力结束占用端口的进程（用于 API 假死但端口仍开着的情况）。"""
+    try:
+        if os.name == "nt":
+            out = subprocess.check_output(
+                ["cmd", "/c", f"netstat -ano | findstr :{int(port)}"],
+                text=True,
+                errors="replace",
+            )
+            pids = set()
+            for line in out.splitlines():
+                parts = line.split()
+                if parts and parts[-1].isdigit():
+                    pids.add(int(parts[-1]))
+            for pid in pids:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], check=False)
+        else:
+            out = subprocess.check_output(
+                ["lsof", f"-tiTCP:{int(port)}", "-sTCP:LISTEN"],
+                text=True,
+                errors="replace",
+            )
+            for pid_s in out.split():
+                if pid_s.isdigit():
+                    try:
+                        os.kill(int(pid_s), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+            time.sleep(0.8)
+            out2 = subprocess.check_output(
+                ["lsof", f"-tiTCP:{int(port)}", "-sTCP:LISTEN"],
+                text=True,
+                errors="replace",
+            )
+            for pid_s in out2.split():
+                if pid_s.isdigit():
+                    try:
+                        os.kill(int(pid_s), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+    except Exception:
+        pass
+
+
 def _backend_api_alive(timeout: float = 1.5) -> bool:
     try:
         req = request.Request(url=f"{BACKEND_URL}/api/scripts", method="GET")
@@ -452,9 +496,20 @@ def main() -> int:
         print(f"Backend already running: {BACKEND_URL} (reuse existing process)")
     elif _tcp_port_open(DEFAULT_BACKEND_HOST, DEFAULT_BACKEND_PORT):
         print(
-            f"Backend port {DEFAULT_BACKEND_HOST}:{DEFAULT_BACKEND_PORT} is occupied, "
-            "skip backend spawn to avoid crash."
+            f"Backend port {DEFAULT_BACKEND_HOST}:{DEFAULT_BACKEND_PORT} is occupied "
+            "but /api/scripts 无响应，尝试重启后端…"
         )
+        _kill_port_process(DEFAULT_BACKEND_PORT)
+        time.sleep(0.5)
+        if _backend_api_alive():
+            print(f"Backend recovered: {BACKEND_URL}")
+        elif _tcp_port_open(DEFAULT_BACKEND_HOST, DEFAULT_BACKEND_PORT):
+            print(
+                f"仍无法释放端口 {DEFAULT_BACKEND_PORT}，请手动结束占用进程后再启动。"
+            )
+        else:
+            print(f"Starting backend: {' '.join(backend_cmd)}")
+            backend = _spawn(backend_cmd, ROOT_DIR)
     else:
         print(f"Starting backend: {' '.join(backend_cmd)}")
         backend = _spawn(backend_cmd, ROOT_DIR)
