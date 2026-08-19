@@ -10,7 +10,7 @@ const TOOLS = [
     id: "race",
     name: "赛马图",
     sub: "Multi Curves",
-    blurb: "纳斯达克+沪深300+BTC+银行5年期整存整取；字幕按各资产：名：盈亏（盈亏率）；tooltip 两位小数。",
+    blurb: "多曲线对比 + 涨跌榜；支持现货/Alpha 每日涨幅前三，按本周/上周筛选。",
   },
   {
     id: "heatmap",

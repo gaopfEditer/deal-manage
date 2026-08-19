@@ -18,7 +18,10 @@ export type PriceCacheEntry = {
 
 function legFingerprint(legs: AssetLeg[]): string {
   return legs
-    .map((l) => `${l.source}:${l.symbol}:${l.label}:${l.url ?? ""}:${l.jsonKey ?? ""}`)
+    .map(
+      (l) =>
+        `${l.source}:${l.symbol}:${l.label}:${l.url ?? ""}:${l.jsonKey ?? ""}:${l.interval ?? "1d"}`
+    )
     .sort()
     .join(";");
 }

@@ -49,7 +49,7 @@
       "startFrame": 90,
       "endFrame": 315,
       "props": {
-        "title": "ETH 情报群",
+        "title": "ETH 情报",
         "selfId": "me",
         "defaultDelayMs": 1000,
         "participants": [

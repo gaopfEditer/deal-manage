@@ -51,6 +51,15 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/gate/, ""),
       },
+      "/binance-bapi": {
+        target: "https://www.binance.com",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/binance-bapi/, ""),
+        headers: {
+          Origin: "https://www.binance.com",
+          Referer: "https://www.binance.com/",
+        },
+      },
     },
   },
 });

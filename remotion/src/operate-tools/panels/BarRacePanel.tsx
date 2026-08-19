@@ -25,7 +25,24 @@ import {
   type SubtitleCue,
   visibleSubtitles,
 } from "../../lib/priceSource";
+import {
+  buildWeeklyTopGainerCombo,
+  describeWeekRange,
+  WEEK_SCOPE_OPTIONS,
+  weekRangeForScope,
+  type WeekScope,
+} from "../../lib/weeklyTopGainers";
+import { buildWeeklyAlphaTopGainerCombo } from "../../lib/binanceAlphaDaily";
 import { FloatingSubtitle } from "./FloatingSubtitle";
+import { BarRaceRankList } from "./BarRaceRankList";
+import {
+  axisDateKey,
+  computeDailyTop3Leaders,
+  pricesToReturnPct,
+  rankOnLeaderboard,
+  top3HighlightSegments,
+  top3MarkPointsForSymbol,
+} from "./barRaceChartHelpers";
 
 const COLORS = ["#f0883e", "#58a6ff", "#3fb950", "#d2a8ff", "#ff7b72", "#e3b341", "#79c0ff"];
 
@@ -52,11 +69,15 @@ export const BarRacePanel: React.FC = () => {
   const [cacheTick, setCacheTick] = useState(0);
   /** 当前点选的快捷组合（仅选腿，不自动拉数） */
   const [activePreset, setActivePreset] = useState<AssetPresetId | null>("macro-mix");
+  /** 每日涨幅前三：时间维度（本周 / 上周 / 合并） */
+  const [weekScope, setWeekScope] = useState<WeekScope>("both");
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const [initialCapital, setInitialCapital] = useState(1_000_000);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
   const [payload, setPayload] = useState<PriceSeriesPayload | null>(null);
+  /** 每日涨幅榜前三：date → [sym, sym, sym] */
+  const [dailyLeaders, setDailyLeaders] = useState<Record<string, string[]>>({});
 
   const [frameIdx, setFrameIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -77,6 +98,8 @@ export const BarRacePanel: React.FC = () => {
   const [selectedCueId, setSelectedCueId] = useState<string | null>(null);
   /** 图表区域高度（px），可用滑条或底边拖拽调整 */
   const [chartHeight, setChartHeight] = useState(600);
+  /** 右侧涨跌榜 */
+  const [showRankList, setShowRankList] = useState(true);
 
   const chartRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -131,6 +154,11 @@ export const BarRacePanel: React.FC = () => {
 
   const cachedRanges = useMemo(() => listPriceCacheKeys(), [cacheTick]);
 
+  const activePresetDef = useMemo(
+    () => ASSET_PRESETS.find((p) => p.id === activePreset),
+    [activePreset]
+  );
+
   const pnlRows = useMemo(() => {
     if (!payload) return [];
     return activeSyms.map((sym, idx) => {
@@ -166,7 +194,7 @@ export const BarRacePanel: React.FC = () => {
 
   useEffect(() => {
     chart.current?.resize();
-  }, [chartHeight]);
+  }, [chartHeight, showRankList]);
 
   const onHeightDragStart = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -207,6 +235,7 @@ export const BarRacePanel: React.FC = () => {
 
   const applyPayload = (data: PriceSeriesPayload) => {
     setPayload(data);
+    setDailyLeaders(data.meta.dailyLeaders ?? computeDailyTop3Leaders(data));
     setFrameIdx(0);
     setPlaying(false);
     setStopped(false);
@@ -219,69 +248,139 @@ export const BarRacePanel: React.FC = () => {
     const preset = ASSET_PRESETS.find((p) => p.id === id);
     if (!preset) return;
     setActivePreset(id);
-    setLegs(clonePresetLegs(preset));
-    setStartDate(preset.startDate);
-    setEndDate(todayYmd());
+    if (preset.dynamic === "weekly-top-gainers" || preset.dynamic === "weekly-alpha-top-gainers") {
+      setLegs([]);
+      setWeekScope("both");
+    } else {
+      setLegs(clonePresetLegs(preset));
+    }
     setPayload(null);
+    setDailyLeaders({});
     setError("");
     setCacheHint("");
-    showToast("ok", `已选择「${preset.name}」，请点「加载组合」获取数据`);
+    if (preset.dynamic === "weekly-top-gainers" || preset.dynamic === "weekly-alpha-top-gainers") {
+      showToast(
+        "ok",
+        `已选择「${preset.name}」：选时间维度后点「加载组合」自动合并每日涨幅前三（图表 1h K 线）`
+      );
+    } else {
+      showToast(
+        "ok",
+        `已选择「${preset.name}」（保留当前日期 ${startDate} → ${endDate || todayYmd()}），请点「加载组合」`
+      );
+    }
+  };
+
+  /** 将日期设为当前组合的推荐区间（不切换组合） */
+  const applyPresetDates = (id: AssetPresetId) => {
+    const preset = ASSET_PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    if (preset.dynamic === "weekly-top-gainers" || preset.dynamic === "weekly-alpha-top-gainers") {
+      const { start, end } = weekRangeForScope(weekScope);
+      setStartDate(start);
+      setEndDate(end);
+      showToast("ok", `已应用涨幅榜区间（${WEEK_SCOPE_OPTIONS.find((o) => o.id === weekScope)?.label}）：${start} → ${end}`);
+      return;
+    }
+    setStartDate(preset.startDate);
+    setEndDate(todayYmd());
+    showToast("ok", `已应用「${preset.name}」推荐日期：${preset.startDate} → ${todayYmd()}`);
   };
 
   /** 仅点击「加载组合」时拉取；同日期区间命中缓存则直接用（最多 5 组） */
   const load = async (opts?: { force?: boolean }) => {
     const seq = ++loadSeq.current;
-    const sd = startDate;
-    const ed = endDate || todayYmd();
-    const legsSnap = legs.map((l) => ({ ...l }));
+    let legsSnap = legs.map((l) => ({ ...l }));
+    let sd = startDate;
+    let ed = endDate || todayYmd();
     const jsonSnap = customJsonText;
-    const cacheKey = makePriceCacheKey(sd, ed, legsSnap);
-    const presetName =
-      ASSET_PRESETS.find((p) => p.id === activePreset)?.name ?? "当前组合";
-
-    if (!opts?.force) {
-      const cached = getPriceCache(cacheKey);
-      if (cached) {
-        if (seq !== loadSeq.current) return;
-        applyPayload(cached);
-        setError("");
-        setCacheHint(`缓存命中 ${sd} → ${ed}（${priceCacheSize()}/${PRICE_CACHE_MAX}）`);
-        setCacheTick((n) => n + 1);
-        setLoading(false);
-        showToast(
-          "ok",
-          `「${presetName}」已从缓存加载：${Object.keys(cached.series).length} 条资产 · ${cached.dates.length} 天`
-        );
-        return;
-      }
-    }
+    const preset = ASSET_PRESETS.find((p) => p.id === activePreset);
+    const presetName = preset?.name ?? "当前组合";
+    let dynamicMeta = "";
+    /** 动态涨幅榜扫描得到的每日前三（注入 payload.meta） */
+    let leadersFromScan: Record<string, string[]> | undefined;
 
     setLoading(true);
     setError("");
     setCacheHint("");
     setPlaying(false);
     setStopped(false);
+
     try {
-      const data = await loadMixedAssets({
+      if (preset?.dynamic === "weekly-top-gainers") {
+        showToast("ok", `正在扫描 ${describeWeekRange(weekScope)} 现货每日涨幅前三…`);
+        const combo = await buildWeeklyTopGainerCombo(weekScope);
+        if (seq !== loadSeq.current) return;
+        legsSnap = combo.legs;
+        sd = combo.startDate;
+        ed = combo.endDate;
+        setLegs(combo.legs);
+        setStartDate(combo.startDate);
+        setEndDate(combo.endDate);
+        dynamicMeta = `${combo.symbolCount} 币 · ${combo.dayCount} 天涨幅榜 · 1h`;
+        leadersFromScan = combo.dailyLeaders;
+      } else if (preset?.dynamic === "weekly-alpha-top-gainers") {
+        showToast("ok", `正在扫描 ${describeWeekRange(weekScope)} Alpha 链上每日涨幅前三…`);
+        const combo = await buildWeeklyAlphaTopGainerCombo(weekScope);
+        if (seq !== loadSeq.current) return;
+        legsSnap = combo.legs;
+        sd = combo.startDate;
+        ed = combo.endDate;
+        setLegs(combo.legs);
+        setStartDate(combo.startDate);
+        setEndDate(combo.endDate);
+        dynamicMeta = `${combo.symbolCount} 个 Alpha · ${combo.dayCount} 天涨幅榜 · 1h`;
+        leadersFromScan = combo.dailyLeaders;
+      }
+
+      const enrichPayload = (data: PriceSeriesPayload): PriceSeriesPayload => {
+        const leaders =
+          leadersFromScan ?? data.meta.dailyLeaders ?? computeDailyTop3Leaders(data);
+        return {
+          ...data,
+          meta: { ...data.meta, dailyLeaders: leaders },
+        };
+      };
+
+      const cacheKey = makePriceCacheKey(sd, ed, legsSnap);
+
+      if (!opts?.force) {
+        const cached = getPriceCache(cacheKey);
+        if (cached) {
+          if (seq !== loadSeq.current) return;
+          applyPayload(enrichPayload(cached));
+          setCacheHint(`缓存命中 ${sd} → ${ed}（${priceCacheSize()}/${PRICE_CACHE_MAX}）`);
+          setCacheTick((n) => n + 1);
+          showToast(
+            "ok",
+            `「${presetName}」已从缓存加载：${Object.keys(cached.series).length} 条资产 · ${cached.dates.length} 天${dynamicMeta ? ` · ${dynamicMeta}` : ""}`
+          );
+          return;
+        }
+      }
+
+      const raw = await loadMixedAssets({
         legs: legsSnap,
         startDate: sd,
         endDate: ed,
         customJsonText: jsonSnap,
       });
       if (seq !== loadSeq.current) return;
+      const data = enrichPayload(raw);
       setPriceCache(cacheKey, sd, ed, data);
       applyPayload(data);
       setCacheHint(`已缓存 ${sd} → ${ed}（${priceCacheSize()}/${PRICE_CACHE_MAX}）`);
       setCacheTick((n) => n + 1);
       showToast(
         "ok",
-        `「${presetName}」数据已就绪：${Object.keys(data.series).length} 条资产 · ${data.dates.length} 天（${sd} → ${ed}）`
+        `「${presetName}」数据已就绪：${Object.keys(data.series).length} 条资产 · ${data.dates.length} 天（${sd} → ${ed}）${dynamicMeta ? ` · ${dynamicMeta}` : ""}`
       );
     } catch (e) {
       if (seq !== loadSeq.current) return;
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setPayload(null);
+      setDailyLeaders({});
       setCacheHint("");
       showToast("err", `加载失败：${msg}`);
     } finally {
@@ -311,35 +410,98 @@ export const BarRacePanel: React.FC = () => {
     if (!chart.current || !payload) return;
     const end = Math.max(0, Math.min(frameIdx, payload.dates.length - 1));
     const dates = payload.dates;
+    const leaders = dailyLeaders;
 
     let yMin = Infinity;
     let yMax = -Infinity;
     for (const sym of activeSyms) {
-      const vals = payload.series[sym];
-      for (const v of vals) {
+      const full = payload.series[sym];
+      const ret = pricesToReturnPct(full, end);
+      for (let i = 0; i <= end; i++) {
+        const v = ret[i];
         if (v == null || !Number.isFinite(v)) continue;
         if (v < yMin) yMin = v;
         if (v > yMax) yMax = v;
       }
     }
     const hasY = Number.isFinite(yMin) && Number.isFinite(yMax);
+    const pad = hasY ? Math.max(0.5, (yMax - yMin) * 0.08) : 0;
 
     const series = activeSyms.map((sym) => {
       const idxColor = allSyms.indexOf(sym);
+      const color = COLORS[idxColor % COLORS.length];
       const full = payload.series[sym];
-      const data = full.map((v, i) => (i <= end ? v : null));
+      const returnFull = pricesToReturnPct(full, end);
+      const data = returnFull.map((v, i) => (i <= end ? v : null));
+      const markers = top3MarkPointsForSymbol(leaders, sym, dates, end);
+
+      const markLineData = top3HighlightSegments(markers, dates, end)
+        .map(({ fromIdx, toIdx }) => {
+          const y0 = data[fromIdx];
+          const y1 = data[toIdx];
+          if (y0 == null || y1 == null) return null;
+          return [{ coord: [dates[fromIdx], y0] }, { coord: [dates[toIdx], y1] }];
+        })
+        .filter(Boolean);
+
+      const markPointData = markers
+        .map(({ axisIdx, axisLabel, rank }) => {
+          const y = data[axisIdx];
+          if (y == null) return null;
+          const medal =
+            rank === 1 ? "#fbbf24" : rank === 2 ? "#cbd5e1" : "#cd7f32";
+          return {
+            name: `日榜${rank}`,
+            coord: [axisLabel, y],
+            symbol: "circle",
+            symbolSize: rank === 1 ? 16 : rank === 2 ? 13 : 11,
+            itemStyle: { color: medal, borderColor: "#fff", borderWidth: 1.5 },
+            label: {
+              show: true,
+              formatter: String(rank),
+              color: "#0d1117",
+              fontSize: 9,
+              fontWeight: "bold" as const,
+            },
+          };
+        })
+        .filter(Boolean);
+
       return {
         name: sym,
         type: "line" as const,
         showSymbol: false,
         connectNulls: true,
         data,
-        lineStyle: { width: 2.5, color: COLORS[idxColor % COLORS.length] },
-        itemStyle: { color: COLORS[idxColor % COLORS.length] },
+        lineStyle: { width: 2, color, opacity: markers.length ? 0.55 : 0.85 },
+        itemStyle: { color },
+        markLine:
+          markLineData.length > 0
+            ? {
+                silent: true,
+                symbol: ["none", "none"],
+                lineStyle: { color, width: 4.5, opacity: 1, cap: "round" },
+                data: markLineData,
+              }
+            : undefined,
+        markPoint:
+          markPointData.length > 0
+            ? {
+                silent: true,
+                data: markPointData,
+              }
+            : undefined,
         endLabel: {
           show: true,
-          formatter: "{a}",
-          color: COLORS[idxColor % COLORS.length],
+          formatter: (p: { value: number | null }) => {
+            const v = p.value;
+            const pct =
+              v == null || !Number.isFinite(v)
+                ? ""
+                : ` ${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+            return `${sym}${pct}`;
+          },
+          color,
           fontSize: 11,
         },
       };
@@ -359,30 +521,67 @@ export const BarRacePanel: React.FC = () => {
           backgroundColor: "rgba(22,27,34,0.95)",
           borderColor: "#30363d",
           textStyle: { color: "#e6edf3" },
-          valueFormatter: (v: unknown) => {
-            const n = Number(v);
-            return Number.isFinite(n) ? n.toFixed(2) : "-";
+          formatter: (params: unknown) => {
+            const items = (Array.isArray(params) ? params : [params]) as Array<{
+              axisValue?: string;
+              seriesName?: string;
+              value?: number | null;
+              color?: string;
+            }>;
+            if (!items.length) return "";
+            const date = items[0].axisValue ?? "";
+            const dayKey = axisDateKey(date);
+            const dayLeaders = leaders[dayKey] ?? [];
+            const leaderHint =
+              dayLeaders.length > 0
+                ? `<div style="margin:4px 0 6px;color:#fbbf24;font-size:11px">日涨幅榜：${dayLeaders
+                    .map((s, i) => `${i + 1}.${s}`)
+                    .join(" · ")}</div>`
+                : "";
+            const lines = items
+              .map((it) => {
+                const n = Number(it.value);
+                const pct = Number.isFinite(n) ? `${n >= 0 ? "+" : ""}${n.toFixed(2)}%` : "-";
+                const rank = rankOnLeaderboard(leaders, date, it.seriesName ?? "");
+                const badge =
+                  rank != null
+                    ? ` <span style="color:#fbbf24;font-size:10px">榜${rank}</span>`
+                    : "";
+                return `<span style="color:${it.color}">●</span> ${it.seriesName}: <b>${pct}</b>${badge}`;
+              })
+              .join("<br/>");
+            return `<div style="font-weight:700;margin-bottom:4px">${date}</div>${leaderHint}${lines}`;
           },
         },
-        grid: { left: 64, right: 72, top: 48, bottom: 40 },
+        grid: { left: 64, right: 88, top: 48, bottom: 40 },
         xAxis: {
           type: "category",
           data: dates,
           boundaryGap: false,
           axisLabel: {
             color: "#8b949e",
-            interval: Math.max(0, Math.floor(dates.length / 10)),
+            interval: Math.max(0, Math.floor(dates.length / 12)),
+            formatter: (v: string) => {
+              if (v.includes(" ")) {
+                const [d, t] = v.split(" ");
+                return `${d.slice(5)} ${t}`;
+              }
+              return v.slice(5);
+            },
           },
           axisLine: { lineStyle: { color: "#30363d" } },
         },
         yAxis: {
           type: "value",
           scale: true,
-          min: hasY ? yMin : undefined,
-          max: hasY ? yMax : undefined,
-          name: "价格",
+          min: hasY ? yMin - pad : undefined,
+          max: hasY ? yMax + pad : undefined,
+          name: "收益率 %",
           nameTextStyle: { color: "#8b949e" },
-          axisLabel: { color: "#8b949e" },
+          axisLabel: {
+            color: "#8b949e",
+            formatter: (v: number) => `${v >= 0 ? "+" : ""}${v}%`,
+          },
           splitLine: { lineStyle: { color: "#21262d" } },
         },
         series,
@@ -390,7 +589,7 @@ export const BarRacePanel: React.FC = () => {
       true
     );
     chart.current.resize();
-  }, [payload, frameIdx, activeSyms, allSyms]);
+  }, [payload, frameIdx, activeSyms, allSyms, dailyLeaders]);
 
   const togglePlay = () => {
     if (!payload) return;
@@ -448,10 +647,7 @@ export const BarRacePanel: React.FC = () => {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => {
-                setActivePreset(null);
-                setStartDate(e.target.value);
-              }}
+              onChange={(e) => setStartDate(e.target.value)}
               style={{ ...inputStyle, width: 148, marginLeft: 6 }}
             />
           </label>
@@ -461,10 +657,7 @@ export const BarRacePanel: React.FC = () => {
               type="date"
               value={endDate}
               max={todayYmd()}
-              onChange={(e) => {
-                setActivePreset(null);
-                setEndDate(e.target.value || todayYmd());
-              }}
+              onChange={(e) => setEndDate(e.target.value || todayYmd())}
               style={{ ...inputStyle, width: 148, marginLeft: 6 }}
             />
           </label>
@@ -482,15 +675,26 @@ export const BarRacePanel: React.FC = () => {
             + 资产
           </button>
           {ASSET_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              style={activePreset === preset.id ? btnPresetActive : btnGhost}
-              title="先点选组合，再点「加载组合」拉数"
-              onClick={() => applyPreset(preset.id)}
-            >
-              {preset.name}
-            </button>
+            <span key={preset.id} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <button
+                type="button"
+                style={activePreset === preset.id ? btnPresetActive : btnGhost}
+                title="切换组合资产（不改日期）"
+                onClick={() => applyPreset(preset.id)}
+              >
+                {preset.name}
+              </button>
+              {activePreset === preset.id ? (
+                <button
+                  type="button"
+                  style={btnPresetDate}
+                  title={`应用推荐起始日 ${preset.startDate}`}
+                  onClick={() => applyPresetDates(preset.id)}
+                >
+                  推荐日期
+                </button>
+              ) : null}
+            </span>
           ))}
           {needsJson || showJson ? (
             <button type="button" style={btnGhost} onClick={() => setShowJson((v) => !v)}>
@@ -501,8 +705,38 @@ export const BarRacePanel: React.FC = () => {
               自定义 JSON
             </button>
           )}
-          <button type="button" style={btnStyle} disabled={loading} onClick={() => void load()}>
-            {loading ? "加载中…" : "加载组合"}
+          {(activePreset === "daily-top-gainers" ||
+            activePreset === "daily-top-gainers-alpha") ? (
+            <label style={labelStyle}>
+              时间维度
+              <select
+                value={weekScope}
+                onChange={(e) => setWeekScope(e.target.value as WeekScope)}
+                style={{ ...inputStyle, width: 120, marginLeft: 6 }}
+              >
+                {WEEK_SCOPE_OPTIONS.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <span style={{ marginLeft: 6, color: "#484f58", fontSize: 11 }}>
+                {describeWeekRange(weekScope)}
+              </span>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            style={btnStyle}
+            disabled={loading}
+            onClick={() => void load()}
+          >
+            {loading
+              ? activePresetDef?.dynamic === "weekly-top-gainers" ||
+                activePresetDef?.dynamic === "weekly-alpha-top-gainers"
+                ? "扫描涨幅榜…"
+                : "加载中…"
+              : "加载组合"}
           </button>
           <button
             type="button"
@@ -544,6 +778,11 @@ export const BarRacePanel: React.FC = () => {
                   patch.symbol = "BTC";
                   patch.label = /纳斯|沪深|定存/.test(leg.label) ? "BTC" : leg.label;
                 }
+                if (source === "binance-alpha" && !/^ALPHA_/i.test(leg.symbol)) {
+                  patch.symbol = leg.symbol.includes("USDT")
+                    ? leg.symbol.toUpperCase()
+                    : `${leg.symbol.toUpperCase()}USDT`;
+                }
                 if (source === "bank-deposit") {
                   patch.symbol = "BANK5Y";
                   patch.label = "银行5年期整存整取";
@@ -554,6 +793,7 @@ export const BarRacePanel: React.FC = () => {
             >
               <option value="gate">Gate 币（更早）</option>
               <option value="binance">Binance 币（约2017起）</option>
+              <option value="binance-alpha">Binance Alpha（链上）</option>
               <option value="sina">新浪 指数/股</option>
               <option value="bank-deposit">银行5年期整存整取</option>
               <option value="custom-json">自定义 JSON</option>
@@ -567,7 +807,9 @@ export const BarRacePanel: React.FC = () => {
                   ? ".IXIC / sh000300"
                   : leg.source === "bank-deposit"
                     ? "BANK5Y"
-                    : "BTC"
+                    : leg.source === "binance-alpha"
+                      ? "ALPHA_175USDT"
+                      : "BTC"
               }
               style={{ ...inputStyle, width: 140 }}
               disabled={leg.source === "custom-json" || leg.source === "bank-deposit"}
@@ -707,6 +949,14 @@ export const BarRacePanel: React.FC = () => {
         >
           + 字幕
         </button>
+        <button
+          type="button"
+          style={showRankList ? btnStyle : btnGhost}
+          disabled={!payload}
+          onClick={() => setShowRankList((v) => !v)}
+        >
+          {showRankList ? "隐藏涨跌榜" : "显示涨跌榜"}
+        </button>
         <span style={{ color: "#c9d1d9", fontSize: 13, fontWeight: 600 }}>
           {currentDate || "—"}
           {payload ? `  ·  ${frameIdx + 1}/${payload.dates.length}` : ""}
@@ -773,42 +1023,55 @@ export const BarRacePanel: React.FC = () => {
 
       {/* 与上方设置拉开距离，录制时只框 chart 区不易露控件 */}
       <div style={chartZone}>
-        <div
-          ref={stageRef}
-          style={{
-            ...stageStyle,
-            height: chartHeight,
-            flex: "none",
-          }}
-          onClick={() => {
-            if (subtitleEdit) setSelectedCueId(null);
-          }}
-        >
-          <div ref={chartRef} style={chartStyle} />
-          {stageCues.map((c) => (
-            <FloatingSubtitle
-              key={c.id}
-              cue={c}
-              displayText={interpolateSubtitle(c.text, interpCtx)}
-              stageRef={stageRef}
-              editing={subtitleEdit}
-              selected={selectedCueId === c.id}
-              assetLabels={activeSyms}
-              onSelect={() => setSelectedCueId(c.id)}
-              onChange={(patch) => updateCue(c.id, patch)}
-              onRemove={() => {
-                setCues((list) => list.filter((x) => x.id !== c.id));
-                setSelectedCueId(null);
-              }}
-            />
-          ))}
+        <div style={chartRow}>
           <div
-            role="separator"
-            aria-label="拖拽调整图表高度"
-            title="拖拽调整高度"
-            onPointerDown={onHeightDragStart}
-            style={resizeHandle}
-          />
+            ref={stageRef}
+            style={{
+              ...stageStyle,
+              height: chartHeight,
+              flex: "1 1 auto",
+              minWidth: 0,
+            }}
+            onClick={() => {
+              if (subtitleEdit) setSelectedCueId(null);
+            }}
+          >
+            <div ref={chartRef} style={chartStyle} />
+            {stageCues.map((c) => (
+              <FloatingSubtitle
+                key={c.id}
+                cue={c}
+                displayText={interpolateSubtitle(c.text, interpCtx)}
+                stageRef={stageRef}
+                editing={subtitleEdit}
+                selected={selectedCueId === c.id}
+                assetLabels={activeSyms}
+                onSelect={() => setSelectedCueId(c.id)}
+                onChange={(patch) => updateCue(c.id, patch)}
+                onRemove={() => {
+                  setCues((list) => list.filter((x) => x.id !== c.id));
+                  setSelectedCueId(null);
+                }}
+              />
+            ))}
+            <div
+              role="separator"
+              aria-label="拖拽调整图表高度"
+              title="拖拽调整高度"
+              onPointerDown={onHeightDragStart}
+              style={resizeHandle}
+            />
+          </div>
+          {showRankList ? (
+            <div style={{ height: chartHeight, minHeight: 0 }}>
+              <BarRaceRankList
+                rows={pnlRows}
+                date={currentDate}
+                initialCapital={initialCapital}
+                dailyTop3={dailyLeaders[axisDateKey(currentDate)] ?? []}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -861,6 +1124,12 @@ const btnPresetActive: React.CSSProperties = {
   color: "#f0883e",
   fontWeight: 700,
 };
+const btnPresetDate: React.CSSProperties = {
+  ...btnGhost,
+  padding: "7px 8px",
+  fontSize: 11,
+  color: "#8b949e",
+};
 const toastStyle: React.CSSProperties = {
   flexShrink: 0,
   display: "flex",
@@ -910,12 +1179,18 @@ const pnlCard: React.CSSProperties = {
   background: "#0d1117",
 };
 const chartZone: React.CSSProperties = {
-  marginTop: 96,
-  paddingTop: 48,
+  marginTop: 48,
+  paddingTop: 16,
   paddingBottom: 24,
   borderTop: "1px solid #21262d",
   background: "#0d1117",
   flexShrink: 0,
+};
+const chartRow: React.CSSProperties = {
+  display: "flex",
+  gap: 12,
+  alignItems: "stretch",
+  minWidth: 0,
 };
 const stageStyle: React.CSSProperties = {
   position: "relative",

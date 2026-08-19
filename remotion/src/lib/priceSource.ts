@@ -3,18 +3,28 @@
  * 可组合例如：纳斯达克 + 沪深300 + BTC + 银行5年整存整取
  */
 
-import { fetchBinanceDailyCloses, todayYmd, type DailyPoint } from "./binanceDaily";
+import { fetchBinanceDailyCloses, fetchBinanceKlineCloses, todayYmd, type DailyPoint } from "./binanceDaily";
+import { fetchAlphaDailyCloses, fetchAlphaKlineCloses } from "./binanceAlphaDaily";
 import { fetchGateDailyCloses } from "./gateDaily";
 import { fetchSinaDailyCloses } from "./sinaDaily";
+import { normalizeBinanceInterval } from "./klineTime";
 
 export type PriceSeriesPayload = {
   dates: string[];
   series: Record<string, (number | null)[]>;
-  meta: { source: string; label: string };
+  meta: {
+    source: string;
+    label: string;
+    /** 每日涨幅榜前三（动态组合扫描结果；无则图表内回退计算） */
+    dailyLeaders?: Record<string, string[]>;
+    /** K 线粒度，如 1h / 1d */
+    interval?: string;
+  };
 };
 
 export type AssetSourceKind =
   | "binance"
+  | "binance-alpha"
   | "gate"
   | "sina"
   | "bank-deposit"
@@ -32,6 +42,8 @@ export type AssetLeg = {
   url?: string;
   /** 仅 custom-json：该腿在 JSON 里的 key（默认用 label） */
   jsonKey?: string;
+  /** K 线周期，默认 1d；涨幅榜/Alpha 组合为 1h */
+  interval?: string;
 };
 
 /**
@@ -99,7 +111,7 @@ export const HOT_PLATFORM_COIN_LEGS: AssetLeg[] = [
   newAssetLeg({ source: "gate", symbol: "HT", label: "HT·火币" }),
 ];
 
-export type AssetPresetId = "macro-mix" | "hot-platform";
+export type AssetPresetId = "macro-mix" | "hot-platform" | "daily-top-gainers" | "daily-top-gainers-alpha";
 
 export type AssetPreset = {
   id: AssetPresetId;
@@ -108,6 +120,8 @@ export type AssetPreset = {
   /** 点选组合时建议的起始日 */
   startDate: string;
   legs: () => AssetLeg[];
+  /** 加载时动态解析资产（如每日涨幅前三） */
+  dynamic?: "weekly-top-gainers" | "weekly-alpha-top-gainers";
 };
 
 export const ASSET_PRESETS: AssetPreset[] = [
@@ -122,6 +136,20 @@ export const ASSET_PRESETS: AssetPreset[] = [
     name: "热门平台币涨幅",
     startDate: "2019-01-01",
     legs: () => HOT_PLATFORM_COIN_LEGS.map((l) => ({ ...l, id: newAssetLeg(l).id })),
+  },
+  {
+    id: "daily-top-gainers",
+    name: "每日涨幅前三（本周/上周）",
+    startDate: "",
+    dynamic: "weekly-top-gainers",
+    legs: () => [],
+  },
+  {
+    id: "daily-top-gainers-alpha",
+    name: "Alpha每日涨幅前三（链上）",
+    startDate: "",
+    dynamic: "weekly-alpha-top-gainers",
+    legs: () => [],
   },
 ];
 
@@ -295,8 +323,18 @@ async function fetchLegPoints(
   sharedJsonText: string
 ): Promise<DailyPoint[]> {
   const key = (leg.jsonKey || leg.label || leg.symbol).trim();
+  const interval = normalizeBinanceInterval(leg.interval ?? "1d");
   if (leg.source === "binance") {
-    return fetchBinanceDailyCloses(leg.symbol, startDate, endDate);
+    if (interval === "1d") {
+      return fetchBinanceDailyCloses(leg.symbol, startDate, endDate);
+    }
+    return fetchBinanceKlineCloses(leg.symbol, startDate, endDate, interval);
+  }
+  if (leg.source === "binance-alpha") {
+    if (interval === "1d") {
+      return fetchAlphaDailyCloses(leg.symbol, startDate, endDate);
+    }
+    return fetchAlphaKlineCloses(leg.symbol, startDate, endDate, interval);
   }
   if (leg.source === "gate") {
     return fetchGateDailyCloses(leg.symbol, startDate, endDate);
@@ -320,7 +358,8 @@ async function fetchLegPoints(
 
 /** 合并多腿：日期并集；缺口前向填充，便于跨市场对齐 */
 export function mergeDailyLegs(
-  legs: Array<{ label: string; points: DailyPoint[]; source: string }>
+  legs: Array<{ label: string; points: DailyPoint[]; source: string }>,
+  metaExtra?: Partial<PriceSeriesPayload["meta"]>
 ): PriceSeriesPayload {
   const dateSet = new Set<string>();
   for (const leg of legs) for (const p of leg.points) dateSet.add(p.date);
@@ -350,6 +389,7 @@ export function mergeDailyLegs(
     meta: {
       source: sources.join("+"),
       label: legs.map((l) => l.label).join(" / "),
+      ...metaExtra,
     },
   };
 }
@@ -415,7 +455,19 @@ export async function loadMixedAssets(opts: LoadMixedOptions): Promise<PriceSeri
     return { label: leg.label, points, source: leg.source };
   });
 
-  return mergeDailyLegs([...marketResults, ...bankResults]);
+  return mergeDailyLegs([...marketResults, ...bankResults], {
+    interval: resolvePayloadInterval(legs),
+  });
+}
+
+function resolvePayloadInterval(legs: AssetLeg[]): string | undefined {
+  const ivs = legs
+    .map((l) => l.interval)
+    .filter(Boolean)
+    .map((iv) => normalizeBinanceInterval(iv!));
+  if (!ivs.length) return undefined;
+  const uniq = [...new Set(ivs)];
+  return uniq.length === 1 ? uniq[0] : undefined;
 }
 
 export function firstValidPrice(
