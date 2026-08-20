@@ -15,7 +15,18 @@ export default defineConfig({
     port: 3010,
     strictPort: true,
     proxy: {
-      "/binance": {
+      "/binance-bapi": {
+        target: "https://www.binance.com",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/binance-bapi/, ""),
+        headers: {
+          Origin: "https://www.binance.com",
+          Referer: "https://www.binance.com/",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        },
+      },
+      "^/binance/": {
         // api.binance.com 在部分网络不可达；官方公开行情镜像
         target: "https://data-api.binance.vision",
         changeOrigin: true,
@@ -50,15 +61,6 @@ export default defineConfig({
         target: "https://api.gateio.ws",
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/gate/, ""),
-      },
-      "/binance-bapi": {
-        target: "https://www.binance.com",
-        changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/binance-bapi/, ""),
-        headers: {
-          Origin: "https://www.binance.com",
-          Referer: "https://www.binance.com/",
-        },
       },
     },
   },

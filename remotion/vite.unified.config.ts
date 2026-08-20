@@ -5,7 +5,20 @@ import path from "node:path";
 const STUDIO = "http://127.0.0.1:3008";
 
 const marketProxy = {
-  "/binance": {
+  // 须写在 /binance 之前，或使用更精确前缀，避免 /binance-bapi 被 /binance 吃掉
+  "/binance-bapi": {
+    target: "https://www.binance.com",
+    changeOrigin: true,
+    rewrite: (p: string) => p.replace(/^\/binance-bapi/, ""),
+    headers: {
+      Origin: "https://www.binance.com",
+      Referer: "https://www.binance.com/",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    },
+  },
+  // 仅匹配 /binance/…，勿用裸 /binance（会误伤 /binance-bapi）
+  "^/binance/": {
     target: "https://data-api.binance.vision",
     changeOrigin: true,
     rewrite: (p: string) => p.replace(/^\/binance/, ""),
@@ -32,15 +45,6 @@ const marketProxy = {
     target: "https://api.gateio.ws",
     changeOrigin: true,
     rewrite: (p: string) => p.replace(/^\/gate/, ""),
-  },
-  "/binance-bapi": {
-    target: "https://www.binance.com",
-    changeOrigin: true,
-    rewrite: (p: string) => p.replace(/^\/binance-bapi/, ""),
-    headers: {
-      Origin: "https://www.binance.com",
-      Referer: "https://www.binance.com/",
-    },
   },
 } as const;
 
@@ -94,7 +98,8 @@ export default defineConfig({
     proxy: {
       ...marketProxy,
       // Remotion Studio（内部 3008）：视频工程与其它 Studio 资源
-      "^/(?!operate-tools(?:/|$)|@vite|@fs|@id|@react-refresh|src/|node_modules/|binance(?:/|$)|sina-|tencent(?:/|$)|gate(?:/|$)).*":
+      // 注意：须排除 binance-bapi（否则会被误转到 Studio，返回 nginx 404）
+      "^/(?!operate-tools(?:/|$)|@vite|@fs|@id|@react-refresh|src/|node_modules/|binance(?:-bapi)?(?:/|$)|sina-|tencent(?:/|$)|gate(?:/|$)).*":
         {
           target: STUDIO,
           changeOrigin: true,

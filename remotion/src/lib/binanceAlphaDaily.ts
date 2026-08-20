@@ -68,6 +68,38 @@ function parseKlineRows(raw: unknown, interval: string): DayBar[] {
   return out;
 }
 
+/**
+ * K 线交易对形如 ALPHA_175USDT。
+ * tokenId 可能是十六进制长串，此时优先用 symbol/alphaId 数字字段。
+ */
+function toAlphaTradeSymbol(
+  rawId: string,
+  row: Record<string, unknown>
+): string {
+  const candidates = [
+    row.symbol,
+    row.tradingSymbol,
+    row.tradeSymbol,
+    row.pair,
+    row.alphaId,
+    row.alpha_id,
+    rawId,
+  ]
+    .map((v) => String(v ?? "").trim())
+    .filter(Boolean);
+
+  for (const c of candidates) {
+    const u = c.toUpperCase();
+    if (/^ALPHA_\d+USDT$/i.test(u)) return u;
+    if (/^ALPHA_\d+$/i.test(u)) return `${u}USDT`;
+    if (/^\d+$/.test(c)) return `ALPHA_${c}USDT`;
+  }
+
+  // 十六进制 tokenId：部分环境仍可用 ALPHA_<tokenId>USDT
+  const id = rawId.replace(/^ALPHA_/i, "").replace(/USDT$/i, "");
+  return `ALPHA_${id}USDT`;
+}
+
 /** 拉取 Alpha 代币列表（带 6h 内存缓存） */
 export async function fetchAlphaTokenList(force = false): Promise<AlphaTokenMeta[]> {
   if (!force && tokenCache && Date.now() - tokenCacheAt < TOKEN_TTL_MS) {
@@ -93,14 +125,17 @@ export async function fetchAlphaTokenList(force = false): Promise<AlphaTokenMeta
   for (const item of rows) {
     if (!item || typeof item !== "object") continue;
     const row = item as Record<string, unknown>;
-    const alphaId = String(row.alphaId ?? row.alpha_id ?? "").trim();
-    if (!alphaId) continue;
-    const name = String(row.name ?? row.symbol ?? row.cexCoinName ?? alphaId).trim();
-    const tradeSymbol = alphaId.endsWith("USDT") ? alphaId : `${alphaId}USDT`;
+    // 官方文档字段为 tokenId；线上偶发 alphaId / alphaId 数字形如 175
+    const rawId = String(
+      row.alphaId ?? row.alpha_id ?? row.tokenId ?? row.token_id ?? ""
+    ).trim();
+    if (!rawId) continue;
+    const name = String(row.name ?? row.symbol ?? row.cexCoinName ?? rawId).trim();
+    const tradeSymbol = toAlphaTradeSymbol(rawId, row);
     list.push({
-      alphaId,
+      alphaId: rawId,
       tradeSymbol,
-      label: name || alphaId.replace(/^ALPHA_/, "α·"),
+      label: name || tradeSymbol.replace(/^ALPHA_/, "α·").replace(/USDT$/, ""),
     });
   }
 
