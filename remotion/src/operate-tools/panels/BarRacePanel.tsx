@@ -28,9 +28,7 @@ import {
 import {
   buildWeeklyTopGainerCombo,
   describeWeekRange,
-  WEEK_SCOPE_OPTIONS,
-  weekRangeForScope,
-  type WeekScope,
+  last7DaysRange,
 } from "../../lib/weeklyTopGainers";
 import { buildWeeklyAlphaTopGainerCombo } from "../../lib/binanceAlphaDaily";
 import { FloatingSubtitle } from "./FloatingSubtitle";
@@ -69,8 +67,6 @@ export const BarRacePanel: React.FC = () => {
   const [cacheTick, setCacheTick] = useState(0);
   /** 当前点选的快捷组合（仅选腿，不自动拉数） */
   const [activePreset, setActivePreset] = useState<AssetPresetId | null>("macro-mix");
-  /** 每日涨幅前三：时间维度（本周 / 上周 / 合并） */
-  const [weekScope, setWeekScope] = useState<WeekScope>("both");
   const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const [initialCapital, setInitialCapital] = useState(1_000_000);
@@ -250,7 +246,9 @@ export const BarRacePanel: React.FC = () => {
     setActivePreset(id);
     if (preset.dynamic === "weekly-top-gainers" || preset.dynamic === "weekly-alpha-top-gainers") {
       setLegs([]);
-      setWeekScope("both");
+      const { start, end } = last7DaysRange();
+      setStartDate(start);
+      setEndDate(end);
     } else {
       setLegs(clonePresetLegs(preset));
     }
@@ -259,9 +257,10 @@ export const BarRacePanel: React.FC = () => {
     setError("");
     setCacheHint("");
     if (preset.dynamic === "weekly-top-gainers" || preset.dynamic === "weekly-alpha-top-gainers") {
+      const { start, end } = last7DaysRange();
       showToast(
         "ok",
-        `已选择「${preset.name}」：选时间维度后点「加载组合」自动合并每日涨幅前三（图表 1h K 线）`
+        `已选择「${preset.name}」，日期已设为近七天 ${start} → ${end}，点「加载组合」扫描每日涨幅前三`
       );
     } else {
       showToast(
@@ -276,10 +275,10 @@ export const BarRacePanel: React.FC = () => {
     const preset = ASSET_PRESETS.find((p) => p.id === id);
     if (!preset) return;
     if (preset.dynamic === "weekly-top-gainers" || preset.dynamic === "weekly-alpha-top-gainers") {
-      const { start, end } = weekRangeForScope(weekScope);
+      const { start, end } = last7DaysRange();
       setStartDate(start);
       setEndDate(end);
-      showToast("ok", `已应用涨幅榜区间（${WEEK_SCOPE_OPTIONS.find((o) => o.id === weekScope)?.label}）：${start} → ${end}`);
+      showToast("ok", `已应用近七天区间：${start} → ${end}`);
       return;
     }
     setStartDate(preset.startDate);
@@ -308,8 +307,8 @@ export const BarRacePanel: React.FC = () => {
 
     try {
       if (preset?.dynamic === "weekly-top-gainers") {
-        showToast("ok", `正在扫描 ${describeWeekRange(weekScope)} 现货每日涨幅前三…`);
-        const combo = await buildWeeklyTopGainerCombo(weekScope);
+        showToast("ok", `正在扫描近七天 ${describeWeekRange("last-7-days")} 合约每日涨幅前三…`);
+        const combo = await buildWeeklyTopGainerCombo("last-7-days");
         if (seq !== loadSeq.current) return;
         legsSnap = combo.legs;
         sd = combo.startDate;
@@ -317,11 +316,11 @@ export const BarRacePanel: React.FC = () => {
         setLegs(combo.legs);
         setStartDate(combo.startDate);
         setEndDate(combo.endDate);
-        dynamicMeta = `${combo.symbolCount} 币 · ${combo.dayCount} 天涨幅榜 · 1h`;
+        dynamicMeta = `${combo.symbolCount} 合约 · ${combo.dayCount} 天涨幅榜 · 1h · ${combo.dataSource ?? "自动源"}`;
         leadersFromScan = combo.dailyLeaders;
       } else if (preset?.dynamic === "weekly-alpha-top-gainers") {
-        showToast("ok", `正在扫描 ${describeWeekRange(weekScope)} Alpha 链上每日涨幅前三…`);
-        const combo = await buildWeeklyAlphaTopGainerCombo(weekScope);
+        showToast("ok", `正在扫描近七天 ${describeWeekRange("last-7-days")} Alpha 每日涨幅前三…`);
+        const combo = await buildWeeklyAlphaTopGainerCombo("last-7-days");
         if (seq !== loadSeq.current) return;
         legsSnap = combo.legs;
         sd = combo.startDate;
@@ -329,7 +328,7 @@ export const BarRacePanel: React.FC = () => {
         setLegs(combo.legs);
         setStartDate(combo.startDate);
         setEndDate(combo.endDate);
-        dynamicMeta = `${combo.symbolCount} 个 Alpha · ${combo.dayCount} 天涨幅榜 · 1h`;
+        dynamicMeta = `${combo.symbolCount} · ${combo.dayCount} 天 · 1h · ${combo.dataSource ?? "Alpha"}`;
         leadersFromScan = combo.dailyLeaders;
       }
 
@@ -440,7 +439,24 @@ export const BarRacePanel: React.FC = () => {
           const y0 = data[fromIdx];
           const y1 = data[toIdx];
           if (y0 == null || y1 == null) return null;
-          return [{ coord: [dates[fromIdx], y0] }, { coord: [dates[toIdx], y1] }];
+          return [
+            { coord: [dates[fromIdx], y0] },
+            {
+              coord: [dates[toIdx], y1],
+              label: {
+                show: true,
+                formatter: sym,
+                position: "middle" as const,
+                color,
+                fontSize: 11,
+                fontWeight: "bold" as const,
+                backgroundColor: "rgba(13,17,23,0.75)",
+                padding: [2, 4] as [number, number],
+                borderRadius: 3,
+                distance: 10,
+              },
+            },
+          ];
         })
         .filter(Boolean);
 
@@ -451,17 +467,22 @@ export const BarRacePanel: React.FC = () => {
           const medal =
             rank === 1 ? "#fbbf24" : rank === 2 ? "#cbd5e1" : "#cd7f32";
           return {
-            name: `日榜${rank}`,
+            name: sym,
             coord: [axisLabel, y],
             symbol: "circle",
-            symbolSize: rank === 1 ? 16 : rank === 2 ? 13 : 11,
+            symbolSize: rank === 1 ? 14 : rank === 2 ? 12 : 10,
             itemStyle: { color: medal, borderColor: "#fff", borderWidth: 1.5 },
             label: {
               show: true,
-              formatter: String(rank),
-              color: "#0d1117",
-              fontSize: 9,
+              formatter: sym,
+              position: "top" as const,
+              color,
+              fontSize: 11,
               fontWeight: "bold" as const,
+              backgroundColor: "rgba(13,17,23,0.8)",
+              padding: [2, 4] as [number, number],
+              borderRadius: 3,
+              distance: 6,
             },
           };
         })
@@ -707,23 +728,9 @@ export const BarRacePanel: React.FC = () => {
           )}
           {(activePreset === "daily-top-gainers" ||
             activePreset === "daily-top-gainers-alpha") ? (
-            <label style={labelStyle}>
-              时间维度
-              <select
-                value={weekScope}
-                onChange={(e) => setWeekScope(e.target.value as WeekScope)}
-                style={{ ...inputStyle, width: 120, marginLeft: 6 }}
-              >
-                {WEEK_SCOPE_OPTIONS.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <span style={{ marginLeft: 6, color: "#484f58", fontSize: 11 }}>
-                {describeWeekRange(weekScope)}
-              </span>
-            </label>
+            <span style={{ marginLeft: 4, color: "#8b949e", fontSize: 12 }}>
+              近七天 {describeWeekRange("last-7-days")}
+            </span>
           ) : null}
           <button
             type="button"
@@ -779,9 +786,15 @@ export const BarRacePanel: React.FC = () => {
                   patch.label = /纳斯|沪深|定存/.test(leg.label) ? "BTC" : leg.label;
                 }
                 if (source === "binance-alpha" && !/^ALPHA_/i.test(leg.symbol)) {
-                  patch.symbol = leg.symbol.includes("USDT")
-                    ? leg.symbol.toUpperCase()
-                    : `${leg.symbol.toUpperCase()}USDT`;
+                  patch.symbol = "ALPHA_1USDT";
+                  patch.label = "α·1";
+                }
+                if (
+                  (source === "binance-futures" || source === "binance") &&
+                  (!leg.symbol.trim() || leg.symbol.startsWith("ALPHA_"))
+                ) {
+                  patch.symbol = "BTC";
+                  if (/α|Alpha/i.test(leg.label)) patch.label = "BTC";
                 }
                 if (source === "bank-deposit") {
                   patch.symbol = "BANK5Y";
@@ -792,7 +805,9 @@ export const BarRacePanel: React.FC = () => {
               style={{ ...inputStyle, width: 148 }}
             >
               <option value="gate">Gate 币（更早）</option>
-              <option value="binance">Binance 币（约2017起）</option>
+              <option value="binance">Binance 现货</option>
+              <option value="binance-futures">Binance 合约（USDT-M）</option>
+              <option value="bybit">Bybit 合约</option>
               <option value="binance-alpha">Binance Alpha（链上）</option>
               <option value="sina">新浪 指数/股</option>
               <option value="bank-deposit">银行5年期整存整取</option>

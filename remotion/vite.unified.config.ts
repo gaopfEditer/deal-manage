@@ -17,6 +17,20 @@ const marketProxy = {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     },
   },
+  "/binance-fapi": {
+    target: "https://fapi.binance.com",
+    changeOrigin: true,
+    timeout: 5_000,
+    proxyTimeout: 5_000,
+    rewrite: (p: string) => p.replace(/^\/binance-fapi/, ""),
+  },
+  "/bybit": {
+    target: "https://api.bybit.com",
+    changeOrigin: true,
+    timeout: 10_000,
+    proxyTimeout: 10_000,
+    rewrite: (p: string) => p.replace(/^\/bybit/, ""),
+  },
   // 仅匹配 /binance/…，勿用裸 /binance（会误伤 /binance-bapi）
   "^/binance/": {
     target: "https://data-api.binance.vision",
@@ -99,7 +113,7 @@ export default defineConfig({
       ...marketProxy,
       // Remotion Studio（内部 3008）：视频工程与其它 Studio 资源
       // 注意：须排除 binance-bapi（否则会被误转到 Studio，返回 nginx 404）
-      "^/(?!operate-tools(?:/|$)|@vite|@fs|@id|@react-refresh|src/|node_modules/|binance(?:-bapi)?(?:/|$)|sina-|tencent(?:/|$)|gate(?:/|$)).*":
+      "^/(?!operate-tools(?:/|$)|@vite|@fs|@id|@react-refresh|src/|node_modules/|binance(?:-bapi|-fapi)?(?:/|$)|bybit(?:/|$)|sina-|tencent(?:/|$)|gate(?:/|$)).*":
         {
           target: STUDIO,
           changeOrigin: true,

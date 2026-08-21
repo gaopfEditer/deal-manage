@@ -26,6 +26,20 @@ export default defineConfig({
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         },
       },
+  "/binance-fapi": {
+    target: "https://fapi.binance.com",
+    changeOrigin: true,
+    timeout: 5_000,
+    proxyTimeout: 5_000,
+    rewrite: (p) => p.replace(/^\/binance-fapi/, ""),
+  },
+  "/bybit": {
+    target: "https://api.bybit.com",
+    changeOrigin: true,
+    timeout: 10_000,
+    proxyTimeout: 10_000,
+    rewrite: (p) => p.replace(/^\/bybit/, ""),
+  },
       "^/binance/": {
         // api.binance.com 在部分网络不可达；官方公开行情镜像
         target: "https://data-api.binance.vision",

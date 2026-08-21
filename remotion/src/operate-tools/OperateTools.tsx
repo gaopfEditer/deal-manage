@@ -10,7 +10,7 @@ const TOOLS = [
     id: "race",
     name: "赛马图",
     sub: "Multi Curves",
-    blurb: "多曲线对比 + 涨跌榜；支持现货/Alpha 每日涨幅前三，按本周/上周筛选。",
+    blurb: "多曲线对比 + 涨跌榜；近七天合约/Alpha（失败自动换 Bybit/现货妖币）。",
   },
   {
     id: "heatmap",

@@ -3,8 +3,9 @@
  * 可组合例如：纳斯达克 + 沪深300 + BTC + 银行5年整存整取
  */
 
-import { fetchBinanceDailyCloses, fetchBinanceKlineCloses, todayYmd, type DailyPoint } from "./binanceDaily";
+import { fetchBinanceDailyCloses, fetchBinanceFuturesKlineCloses, fetchBinanceKlineCloses, todayYmd, type DailyPoint } from "./binanceDaily";
 import { fetchAlphaDailyCloses, fetchAlphaKlineCloses } from "./binanceAlphaDaily";
+import { fetchBybitKlineCloses } from "./bybitDaily";
 import { fetchGateDailyCloses } from "./gateDaily";
 import { fetchSinaDailyCloses } from "./sinaDaily";
 import { normalizeBinanceInterval } from "./klineTime";
@@ -24,7 +25,9 @@ export type PriceSeriesPayload = {
 
 export type AssetSourceKind =
   | "binance"
+  | "binance-futures"
   | "binance-alpha"
+  | "bybit"
   | "gate"
   | "sina"
   | "bank-deposit"
@@ -139,14 +142,14 @@ export const ASSET_PRESETS: AssetPreset[] = [
   },
   {
     id: "daily-top-gainers",
-    name: "每日涨幅前三（本周/上周）",
+    name: "近七天合约每日涨幅前三",
     startDate: "",
     dynamic: "weekly-top-gainers",
     legs: () => [],
   },
   {
     id: "daily-top-gainers-alpha",
-    name: "Alpha每日涨幅前三（链上）",
+    name: "近七天Alpha每日涨幅前三",
     startDate: "",
     dynamic: "weekly-alpha-top-gainers",
     legs: () => [],
@@ -329,6 +332,24 @@ async function fetchLegPoints(
       return fetchBinanceDailyCloses(leg.symbol, startDate, endDate);
     }
     return fetchBinanceKlineCloses(leg.symbol, startDate, endDate, interval);
+  }
+  if (leg.source === "binance-futures") {
+    try {
+      return await fetchBinanceFuturesKlineCloses(leg.symbol, startDate, endDate, interval);
+    } catch {
+      try {
+        return await fetchBybitKlineCloses(leg.symbol, startDate, endDate, interval);
+      } catch {
+        return fetchBinanceKlineCloses(leg.symbol, startDate, endDate, interval);
+      }
+    }
+  }
+  if (leg.source === "bybit") {
+    try {
+      return await fetchBybitKlineCloses(leg.symbol, startDate, endDate, interval);
+    } catch {
+      return fetchBinanceKlineCloses(leg.symbol, startDate, endDate, interval);
+    }
   }
   if (leg.source === "binance-alpha") {
     if (interval === "1d") {

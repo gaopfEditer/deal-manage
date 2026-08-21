@@ -1,20 +1,28 @@
 /**
- * 扫描 Binance USDT 现货：按自然日涨幅排序，取每日前三，合并为组合。
+ * 扫描合约/现货：近七日按自然日涨幅排序，取每日前三，合并为组合。
+ * 合约源优先 Binance FAPI → Bybit → Binance 现货回退。
  */
 
-import { newAssetLeg, type AssetLeg } from "./priceSource";
+import { newAssetLeg, type AssetLeg, type AssetSourceKind } from "./priceSource";
+import { fetchBybitDailyBars, fetchBybitTopLinearUsdtPairs } from "./bybitDaily";
 
 const BINANCE = "/binance";
+const BINANCE_FAPI = "/binance-fapi";
+
+/** 海外域名易超时：单请求上限，超时立刻换源 */
+const FETCH_MS = 6_000;
+
+function fetchTimed(url: string, ms = FETCH_MS): Promise<Response> {
+  return fetch(url, { signal: AbortSignal.timeout(ms) });
+}
 
 /** 涨幅榜组合图表 K 线粒度（扫描仍用日线） */
 export const TOP_GAINER_CHART_INTERVAL = "1h";
 
-export type WeekScope = "this-week" | "last-week" | "both";
+export type WeekScope = "last-7-days" | "this-week" | "last-week" | "both";
 
 export const WEEK_SCOPE_OPTIONS: { id: WeekScope; label: string }[] = [
-  { id: "this-week", label: "本周" },
-  { id: "last-week", label: "上周" },
-  { id: "both", label: "本周+上周" },
+  { id: "last-7-days", label: "近七天" },
 ];
 
 const STABLE_BASES = new Set([
@@ -30,6 +38,35 @@ const STABLE_BASES = new Set([
   "USDE",
 ]);
 
+/** 现货妖币回退时排除的大盘 */
+const MAJOR_BASES = new Set([
+  "BTC",
+  "ETH",
+  "BNB",
+  "SOL",
+  "XRP",
+  "DOGE",
+  "ADA",
+  "TRX",
+  "TON",
+  "AVAX",
+  "LINK",
+  "DOT",
+  "MATIC",
+  "POL",
+  "LTC",
+  "BCH",
+  "SHIB",
+  "PEPE",
+  "WIF",
+  "SUI",
+  "APT",
+  "NEAR",
+  "ATOM",
+  "UNI",
+  "AAVE",
+]);
+
 export type WeeklyTopGainerCombo = {
   legs: AssetLeg[];
   startDate: string;
@@ -38,6 +75,8 @@ export type WeeklyTopGainerCombo = {
   dayCount: number;
   dailyLeaders: Record<string, string[]>;
   metaLabel: string;
+  /** 实际用的行情源（便于 toast 提示） */
+  dataSource?: string;
 };
 
 export type DayBar = { date: string; open: number; close: number };
@@ -54,7 +93,6 @@ function parseYmdLocal(ymd: string): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 
-/** 周一为一周起点（本地时区） */
 export function mondayOfWeek(ref: Date = new Date()): Date {
   const d = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
   const dow = d.getDay();
@@ -63,7 +101,18 @@ export function mondayOfWeek(ref: Date = new Date()): Date {
   return d;
 }
 
+export function last7DaysRange(ref: Date = new Date()): { start: string; end: string } {
+  const end = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  return { start: fmtLocalYmd(start), end: fmtLocalYmd(end) };
+}
+
 export function weekRangeForScope(scope: WeekScope): { start: string; end: string } {
+  if (scope === "last-7-days" || !scope) {
+    return last7DaysRange();
+  }
+
   const today = new Date();
   const thisMon = mondayOfWeek(today);
   const thisSun = new Date(thisMon);
@@ -104,18 +153,15 @@ function isExcludedPair(pair: string): boolean {
   if (STABLE_BASES.has(base)) return true;
   if (/^(LD|LA)/.test(base)) return true;
   if (/UP$|DOWN$|BEAR$|BULL$/.test(base) && base.length > 5) return true;
+  if (pair.includes("_")) return true;
   return false;
 }
 
-async function fetchTopVolumeUsdtPairs(limit = 120): Promise<string[]> {
-  const res = await fetch(`${BINANCE}/api/v3/ticker/24hr`);
-  if (!res.ok) throw new Error(`Binance ticker 失败 ${res.status}`);
-  const rows = (await res.json()) as Array<{
-    symbol: string;
-    quoteVolume: string;
-  }>;
-  if (!Array.isArray(rows)) throw new Error("Binance ticker 返回异常");
-
+async function fetchBinanceFapiPairs(limit: number): Promise<string[]> {
+  const res = await fetchTimed(`${BINANCE_FAPI}/fapi/v1/ticker/24hr`, 5_000);
+  if (!res.ok) throw new Error(`Binance 合约 ticker 失败 ${res.status}`);
+  const rows = (await res.json()) as Array<{ symbol: string; quoteVolume: string }>;
+  if (!Array.isArray(rows)) throw new Error("Binance 合约 ticker 返回异常");
   return rows
     .filter((r) => r.symbol.endsWith("USDT") && !isExcludedPair(r.symbol))
     .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
@@ -123,7 +169,38 @@ async function fetchTopVolumeUsdtPairs(limit = 120): Promise<string[]> {
     .map((r) => r.symbol);
 }
 
-async function fetchDailyBars(
+async function fetchBinanceSpotPairs(limit: number): Promise<string[]> {
+  const res = await fetchTimed(`${BINANCE}/api/v3/ticker/24hr`);
+  if (!res.ok) throw new Error(`Binance 现货 ticker 失败 ${res.status}`);
+  const rows = (await res.json()) as Array<{ symbol: string; quoteVolume: string }>;
+  if (!Array.isArray(rows)) throw new Error("Binance 现货 ticker 返回异常");
+  return rows
+    .filter((r) => r.symbol.endsWith("USDT") && !isExcludedPair(r.symbol))
+    .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+    .slice(0, limit)
+    .map((r) => r.symbol);
+}
+
+/** 现货「妖币」池：跳过大盘前 40，取其后 120 个成交额对 */
+export async function fetchBinanceSpotMicrocapPairs(limit = 120): Promise<string[]> {
+  const res = await fetchTimed(`${BINANCE}/api/v3/ticker/24hr`);
+  if (!res.ok) throw new Error(`Binance 现货 ticker 失败 ${res.status}`);
+  const rows = (await res.json()) as Array<{ symbol: string; quoteVolume: string }>;
+  if (!Array.isArray(rows)) throw new Error("Binance 现货 ticker 返回异常");
+
+  return rows
+    .filter(
+      (r) =>
+        r.symbol.endsWith("USDT") &&
+        !isExcludedPair(r.symbol) &&
+        !MAJOR_BASES.has(baseFromPair(r.symbol))
+    )
+    .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+    .slice(40, 40 + limit)
+    .map((r) => r.symbol);
+}
+
+async function fetchBinanceFapiDailyBars(
   pair: string,
   startDate: string,
   endDate: string
@@ -131,16 +208,44 @@ async function fetchDailyBars(
   const startMs = Date.parse(`${startDate}T00:00:00`);
   const endMs = Date.parse(`${endDate}T23:59:59`);
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+  const url =
+    `${BINANCE_FAPI}/fapi/v1/klines?symbol=${encodeURIComponent(pair)}` +
+    `&interval=1d&startTime=${startMs}&endTime=${endMs}&limit=1000`;
+  try {
+    const res = await fetchTimed(url, 5_000);
+    if (!res.ok) return [];
+    const rows = (await res.json()) as unknown[];
+    if (!Array.isArray(rows)) return [];
+    const out: DayBar[] = [];
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 5) continue;
+      const openTime = Number(row[0]);
+      const open = Number(row[1]);
+      const close = Number(row[4]);
+      if (!Number.isFinite(openTime) || !Number.isFinite(open) || !Number.isFinite(close)) continue;
+      out.push({ date: fmtLocalYmd(new Date(openTime)), open, close });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
 
+async function fetchBinanceSpotDailyBars(
+  pair: string,
+  startDate: string,
+  endDate: string
+): Promise<DayBar[]> {
+  const startMs = Date.parse(`${startDate}T00:00:00`);
+  const endMs = Date.parse(`${endDate}T23:59:59`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
   const url =
     `${BINANCE}/api/v3/klines?symbol=${encodeURIComponent(pair)}` +
     `&interval=1d&startTime=${startMs}&endTime=${endMs}&limit=1000`;
-  const res = await fetch(url);
+  const res = await fetchTimed(url);
   if (!res.ok) return [];
-
   const rows = (await res.json()) as unknown[];
   if (!Array.isArray(rows)) return [];
-
   const out: DayBar[] = [];
   for (const row of rows) {
     if (!Array.isArray(row) || row.length < 5) continue;
@@ -148,14 +253,67 @@ async function fetchDailyBars(
     const open = Number(row[1]);
     const close = Number(row[4]);
     if (!Number.isFinite(openTime) || !Number.isFinite(open) || !Number.isFinite(close)) continue;
-    const d = new Date(openTime);
-    out.push({
-      date: fmtLocalYmd(d),
-      open,
-      close,
-    });
+    out.push({ date: fmtLocalYmd(new Date(openTime)), open, close });
   }
   return out;
+}
+
+export type MarketFeedKind = "binance-futures" | "bybit" | "binance";
+
+type ResolvedFeed = {
+  kind: MarketFeedKind;
+  label: string;
+  pairs: string[];
+  fetchDailyBars: (pair: string, start: string, end: string) => Promise<DayBar[]>;
+};
+
+/** 合约扫描源：Bybit → 现货 → Binance FAPI（国内 FAPI 常超时，放最后且短超时） */
+async function resolveFuturesFeed(limit = 120): Promise<ResolvedFeed> {
+  const errors: string[] = [];
+
+  try {
+    const pairs = await fetchBybitTopLinearUsdtPairs(limit);
+    if (pairs.length) {
+      return {
+        kind: "bybit",
+        label: "Bybit合约",
+        pairs,
+        fetchDailyBars: fetchBybitDailyBars,
+      };
+    }
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+
+  try {
+    const pairs = await fetchBinanceSpotPairs(limit);
+    if (pairs.length) {
+      return {
+        kind: "binance",
+        label: "Binance现货(回退)",
+        pairs,
+        fetchDailyBars: fetchBinanceSpotDailyBars,
+      };
+    }
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+
+  try {
+    const pairs = await fetchBinanceFapiPairs(limit);
+    if (pairs.length) {
+      return {
+        kind: "binance-futures",
+        label: "Binance合约",
+        pairs,
+        fetchDailyBars: fetchBinanceFapiDailyBars,
+      };
+    }
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+
+  throw new Error(`合约行情源均不可用：${errors.join("；") || "未知错误"}`);
 }
 
 async function mapPool<T, R>(
@@ -183,9 +341,9 @@ export type TopGainerBuildOptions = {
   fetchDailyBars: (pair: string, scanStart: string, end: string) => Promise<DayBar[]>;
   makeLeg: (base: string, pair: string) => AssetLeg;
   concurrency?: number;
+  dataSource?: string;
 };
 
-/** 在给定交易对集合内，按日涨幅取前三并合并为组合 */
 export async function buildTopGainerComboFromPairs(
   opts: TopGainerBuildOptions
 ): Promise<WeeklyTopGainerCombo> {
@@ -255,24 +413,53 @@ export async function buildTopGainerComboFromPairs(
     dayCount: Object.keys(dailyLeaders).length,
     dailyLeaders,
     metaLabel: `${opts.metaPrefix}·${scopeLabel}`,
+    dataSource: opts.dataSource,
   };
 }
 
+function sourceForFeed(kind: MarketFeedKind): AssetSourceKind {
+  if (kind === "binance-futures") return "binance-futures";
+  if (kind === "bybit") return "bybit";
+  return "binance";
+}
+
 /**
- * 按 scope 扫描现货 USDT 每日涨幅前三，合并去重为 binance 资产腿。
+ * 近七日合约每日涨幅前三（自动换源重试）。
  */
 export async function buildWeeklyTopGainerCombo(
-  scope: WeekScope
+  scope: WeekScope = "last-7-days"
 ): Promise<WeeklyTopGainerCombo> {
-  const pairs = await fetchTopVolumeUsdtPairs(120);
-  if (!pairs.length) throw new Error("未获取到 USDT 交易对列表");
-
+  const feed = await resolveFuturesFeed(120);
   return buildTopGainerComboFromPairs({
     scope,
-    metaPrefix: "每日涨幅前三",
+    metaPrefix: "合约每日涨幅前三",
+    pairs: feed.pairs,
+    pairToBase: baseFromPair,
+    fetchDailyBars: feed.fetchDailyBars,
+    dataSource: feed.label,
+    makeLeg: (base) =>
+      newAssetLeg({
+        source: sourceForFeed(feed.kind),
+        symbol: base,
+        label: base,
+        interval: TOP_GAINER_CHART_INTERVAL,
+      }),
+  });
+}
+
+/** Alpha 不可用时：现货妖币池每日涨幅前三 */
+export async function buildSpotMicrocapTopGainerCombo(
+  scope: WeekScope = "last-7-days"
+): Promise<WeeklyTopGainerCombo> {
+  const pairs = await fetchBinanceSpotMicrocapPairs(120);
+  if (!pairs.length) throw new Error("现货妖币候选为空");
+  return buildTopGainerComboFromPairs({
+    scope,
+    metaPrefix: "现货妖币每日涨幅前三",
     pairs,
     pairToBase: baseFromPair,
-    fetchDailyBars: fetchDailyBars,
+    fetchDailyBars: fetchBinanceSpotDailyBars,
+    dataSource: "Binance现货妖币(Alpha回退)",
     makeLeg: (base) =>
       newAssetLeg({
         source: "binance",
@@ -283,7 +470,7 @@ export async function buildWeeklyTopGainerCombo(
   });
 }
 
-export function describeWeekRange(scope: WeekScope): string {
+export function describeWeekRange(scope: WeekScope = "last-7-days"): string {
   const { start, end } = weekRangeForScope(scope);
   return `${start} → ${end}`;
 }

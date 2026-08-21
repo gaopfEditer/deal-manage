@@ -6,8 +6,10 @@ import type { DailyPoint } from "./binanceDaily";
 import { newAssetLeg } from "./priceSource";
 import { INTERVAL_MS, normalizeBinanceInterval } from "./klineTime";
 import {
+  buildSpotMicrocapTopGainerCombo,
   buildTopGainerComboFromPairs,
   TOP_GAINER_CHART_INTERVAL,
+  weekRangeForScope,
   type DayBar,
   type WeekScope,
   type WeeklyTopGainerCombo,
@@ -107,7 +109,8 @@ export async function fetchAlphaTokenList(force = false): Promise<AlphaTokenMeta
   }
 
   const res = await fetch(
-    `${BAPI}/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list`
+    `${BAPI}/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list`,
+    { signal: AbortSignal.timeout(8_000) }
   );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -237,33 +240,60 @@ function pairToAlphaLabel(tradeSymbol: string): string {
 export { TOP_GAINER_CHART_INTERVAL } from "./weeklyTopGainers";
 
 /**
- * 链上 Alpha：在 Alpha 代币池内按日涨幅取前三，合并为组合。
+ * 链上 Alpha：优先 Binance Alpha；失败则回退现货妖币涨幅榜。
  */
 export async function buildWeeklyAlphaTopGainerCombo(
-  scope: WeekScope
+  scope: WeekScope = "last-7-days"
 ): Promise<WeeklyTopGainerCombo> {
-  const tokens = await fetchAlphaTokenList();
-  labelByTradeSymbol.clear();
-  for (const t of tokens) {
-    labelByTradeSymbol.set(t.tradeSymbol, t.label);
+  try {
+    const tokens = await fetchAlphaTokenList();
+    labelByTradeSymbol.clear();
+    for (const t of tokens) {
+      labelByTradeSymbol.set(t.tradeSymbol, t.label);
+    }
+
+    const pairs = tokens.map((t) => t.tradeSymbol);
+    if (!pairs.length) throw new Error("未获取到 Alpha 代币交易对");
+
+    // 抽样探测 K 线是否可用
+    const probe = await fetchAlphaDailyBars(pairs[0], weekProbeStart(scope), weekProbeEnd(scope));
+    if (probe.length < 2) {
+      throw new Error("Alpha K 线不可用");
+    }
+
+    return buildTopGainerComboFromPairs({
+      scope,
+      metaPrefix: "Alpha每日涨幅前三",
+      pairs,
+      pairToBase: pairToAlphaLabel,
+      fetchDailyBars: fetchAlphaDailyBars,
+      concurrency: 6,
+      dataSource: "Binance Alpha",
+      makeLeg: (_label, tradeSymbol) =>
+        newAssetLeg({
+          source: "binance-alpha",
+          symbol: tradeSymbol,
+          label: pairToAlphaLabel(tradeSymbol),
+          interval: TOP_GAINER_CHART_INTERVAL,
+        }),
+    });
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    const fallback = await buildSpotMicrocapTopGainerCombo(scope);
+    return {
+      ...fallback,
+      metaLabel: fallback.metaLabel.replace("现货妖币", "Alpha回退·妖币"),
+      dataSource: `现货妖币回退（Alpha失败: ${reason.slice(0, 80)}）`,
+    };
   }
+}
 
-  const pairs = tokens.map((t) => t.tradeSymbol);
-  if (!pairs.length) throw new Error("未获取到 Alpha 代币交易对");
+function weekProbeStart(scope: WeekScope): string {
+  const { start } = weekRangeForScope(scope);
+  return start;
+}
 
-  return buildTopGainerComboFromPairs({
-    scope,
-    metaPrefix: "Alpha每日涨幅前三",
-    pairs,
-    pairToBase: pairToAlphaLabel,
-    fetchDailyBars: fetchAlphaDailyBars,
-    concurrency: 6,
-    makeLeg: (_label, tradeSymbol) =>
-      newAssetLeg({
-        source: "binance-alpha",
-        symbol: tradeSymbol,
-        label: pairToAlphaLabel(tradeSymbol),
-        interval: TOP_GAINER_CHART_INTERVAL,
-      }),
-  });
+function weekProbeEnd(scope: WeekScope): string {
+  const { end } = weekRangeForScope(scope);
+  return end;
 }

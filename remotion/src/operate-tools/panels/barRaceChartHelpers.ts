@@ -38,6 +38,13 @@ function lastIndexForDay(dates: string[], ymd: string, maxIdx: number): number {
   return last;
 }
 
+function firstIndexForDay(dates: string[], ymd: string, maxIdx: number): number {
+  for (let i = 0; i <= maxIdx; i++) {
+    if (axisDateKey(dates[i]) === ymd) return i;
+  }
+  return -1;
+}
+
 function lastIndexBeforeDay(dates: string[], ymd: string, maxIdx: number): number {
   let last = -1;
   for (let i = 0; i <= maxIdx; i++) {
@@ -134,7 +141,7 @@ export function top3MarkPointsForSymbol(
   return out.sort((a, b) => a.axisIdx - b.axisIdx);
 }
 
-/** 日榜前三对应的涨跌段（上一日末 → 当日末） */
+/** 日榜前三对应的涨跌段（上一日末 → 当日末；首日无前一日时用当日首根 → 当日末） */
 export function top3HighlightSegments(
   markers: Array<{ axisIdx: number; axisLabel: string; dayKey: string; rank: number }>,
   dates: string[],
@@ -142,8 +149,17 @@ export function top3HighlightSegments(
 ): Array<{ fromIdx: number; toIdx: number; rank: number }> {
   return markers
     .map(({ axisIdx, dayKey, rank }) => {
-      const fromIdx = lastIndexBeforeDay(dates, dayKey, endIdx);
-      if (fromIdx < 0 || fromIdx >= axisIdx) return null;
+      let fromIdx = lastIndexBeforeDay(dates, dayKey, endIdx);
+      // 近七天第一天：轴上没有前一日收盘，改标当日整段
+      if (fromIdx < 0) {
+        fromIdx = firstIndexForDay(dates, dayKey, endIdx);
+      }
+      if (fromIdx < 0) return null;
+      if (fromIdx >= axisIdx) {
+        // 当日只有一根 K：退到前一根，仍能画出短线段
+        if (axisIdx > 0) fromIdx = axisIdx - 1;
+        else return null;
+      }
       return { fromIdx, toIdx: axisIdx, rank };
     })
     .filter((x): x is { fromIdx: number; toIdx: number; rank: number } => x != null);

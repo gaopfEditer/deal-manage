@@ -112,6 +112,73 @@ export async function fetchBinanceDailyCloses(
   return fetchBinanceKlineCloses(symbol, startDate, endDate, "1d");
 }
 
+/**
+ * USDT-M 永续合约 K 线（经 /binance → data-api.binance.vision/fapi）。
+ */
+export async function fetchBinanceFuturesKlineCloses(
+  symbol: string,
+  startDate: string,
+  endDate: string,
+  intervalRaw = "1d"
+): Promise<DailyPoint[]> {
+  const interval = normalizeBinanceInterval(intervalRaw);
+  const pair = toSymbolPair(symbol);
+  if (!pair) return [];
+
+  const startMs =
+    interval === "1d"
+      ? Date.parse(`${startDate}T00:00:00Z`)
+      : Date.parse(`${startDate}T00:00:00`);
+  const endMs =
+    interval === "1d"
+      ? Date.parse(`${endDate}T23:59:59Z`)
+      : Date.parse(`${endDate}T23:59:59`);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+    throw new Error(`日期无效: ${startDate} → ${endDate}`);
+  }
+
+  const step = INTERVAL_MS[interval] ?? DAY;
+  const out: DailyPoint[] = [];
+  let cursor = startMs;
+  let guard = 0;
+  const maxPages = interval === "1d" ? 40 : 200;
+
+  while (cursor <= endMs && guard < maxPages) {
+    guard += 1;
+    const url =
+      `/binance-fapi/fapi/v1/klines?symbol=${encodeURIComponent(pair)}` +
+      `&interval=${encodeURIComponent(interval)}&startTime=${cursor}&endTime=${endMs}&limit=1500`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${pair} 合约请求失败 ${res.status}: ${text.slice(0, 120)}`);
+    }
+    const rows = (await res.json()) as unknown[];
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 5) continue;
+      const openTime = Number(row[0]);
+      const close = Number(row[4]);
+      if (!Number.isFinite(openTime) || !Number.isFinite(close)) continue;
+      const date =
+        interval === "1d" ? fmtUTC(openTime) : fmtLocalAxisLabel(openTime, interval);
+      out.push({ date, close });
+    }
+    const lastOpen = Number((rows[rows.length - 1] as unknown[])[0]);
+    if (!Number.isFinite(lastOpen)) break;
+    const next = lastOpen + step;
+    if (next <= cursor) break;
+    cursor = next;
+    if (rows.length < 1000) break;
+  }
+
+  const map = new Map<string, number>();
+  for (const p of out) map.set(p.date, p.close);
+  return [...map.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([date, close]) => ({ date, close }));
+}
+
 export async function fetchMultiSymbolDaily(
   symbols: string[],
   startDate: string,
