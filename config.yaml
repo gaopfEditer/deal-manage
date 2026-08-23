@@ -90,6 +90,20 @@ cdp_profiles:
     remote_debugging_port: 9222
     # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
     after_port_kill_killall_chrome: false
+  - id: chrome-debug9223
+    name: Chrome 调试9223
+    chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    user_data_dir: "/Users/maotouying/frontend/chrome-debug-9223"
+    remote_debugging_port: 9223
+    # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
+    after_port_kill_killall_chrome: false
+  - id: chrome-debug9224
+    name: Chrome 调试9224
+    chrome_path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    user_data_dir: "/Users/maotouying/frontend/chrome-debug-9224"
+    remote_debugging_port: 9224
+    # 若仍占端口，可改为 true（会 killall Google Chrome，慎用）
+    after_port_kill_killall_chrome: false
 
 # run.py 在 IS_RUN_WITH_CDP=true 时读取该段：
 # 1) 先启动 cdp profile
