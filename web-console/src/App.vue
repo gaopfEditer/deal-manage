@@ -511,13 +511,33 @@
               <div class="meta cdp-path" v-if="whisperResult.paths?.log">
                 日志: {{ whisperResult.paths.log }}
               </div>
-              <div class="whisper-content-label" v-if="whisperResult.content?.text">
+              <div class="whisper-content-label" v-if="whisperResult.content?.text || whisperResult.content?.title">
                 文稿预览
                 <el-tag size="small" type="info">{{ whisperResult.content.kind || "text" }}</el-tag>
+                <el-tag v-if="whisperResult.content.format" size="small">{{ whisperResult.content.format }}</el-tag>
                 <el-tag v-if="whisperResult.content.truncated" size="small" type="warning">已截断</el-tag>
               </div>
               <el-input
-                v-if="whisperResult.content?.text"
+                v-if="whisperResult.content?.title || whisperResult.content?.content"
+                type="textarea"
+                :rows="4"
+                readonly
+                :model-value="whisperResult.content.title"
+                class="whisper-content"
+                placeholder="摘要（title）"
+              />
+              <el-input
+                v-if="whisperResult.content?.title || whisperResult.content?.content"
+                type="textarea"
+                :rows="12"
+                readonly
+                :model-value="whisperResult.content.content"
+                class="whisper-content"
+                placeholder="全文（content）"
+                style="margin-top: 8px"
+              />
+              <el-input
+                v-else-if="whisperResult.content?.text"
                 type="textarea"
                 :rows="14"
                 readonly

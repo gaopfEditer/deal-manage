@@ -226,7 +226,7 @@ curl -sS -X POST 'http://127.0.0.1:8000/api/whisper/transcribe' \
 }
 ```
 
-成品主路径为 **`WhisprRT/output/{文件名}.txt`**；若只有带时间戳原稿，服务也会同步一份到 `output/`。`refined` 为 Qwen 整理后的「摘要 + 全文」。同名文件已存在且未传 `force` 时返回 `status: skipped_existing`。转写较慢，请加大客户端超时。
+成品主路径为 **`WhisprRT/output/{文件名}.txt`**（JSON：`{"title":"摘要：…","content":"全文：…"}`，无时间戳）。`subtitles/` 仍保留带时间戳的原稿。若 Qwen 整理失败，也会写出去时间戳后的占位 JSON，而不会把 `[xs -> ys]` 原稿拷进成品。同名文件已存在且未传 `force` 时返回 `status: skipped_existing`。转写较慢，请加大客户端超时。
 
 ## 前端（Vue 3 + Element Plus）
 

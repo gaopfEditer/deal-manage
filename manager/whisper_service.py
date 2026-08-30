@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -104,7 +105,8 @@ def collect_output_paths(root: Path, name: str) -> dict[str, str | None]:
 def ensure_primary_under_output(root: Path, name: str) -> Path | None:
     """
     保证成品落在 {root}/output/{name}.txt。
-    若整理稿已在 output 则直接返回；否则把 subtitles 原稿复制过去。
+    若整理稿已在 output 则直接返回；否则把 subtitles 去时间戳后写成 title/content JSON。
+    绝不把带 [xs -> ys] 的原稿原样拷到成品目录。
     """
     out_dir = root / OUTPUT_SUBDIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -112,10 +114,78 @@ def ensure_primary_under_output(root: Path, name: str) -> Path | None:
     if out.is_file():
         return out.resolve()
     src = root / "subtitles" / f"{name}.txt"
-    if src.is_file():
-        shutil.copy2(src, out)
-        return out.resolve()
-    return None
+    if not src.is_file():
+        return None
+    raw = src.read_text(encoding="utf-8", errors="replace")
+    plain = _extract_plain_from_timestamped(raw)
+    summary = (
+        "该文本为语音转写原稿自动去时间戳后的占位摘要；"
+        "AI 整理未成功，请稍后强制重跑以生成正式摘要。"
+    )
+    payload = {
+        "title": f"摘要：{summary}",
+        "content": f"全文：{plain or '（暂无正文）'}",
+    }
+    out.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return out.resolve()
+
+
+def _extract_plain_from_timestamped(raw_text: str) -> str:
+    lines = raw_text.splitlines()
+    texts: list[str] = []
+    pattern1 = re.compile(r"^\[\d+(?:\.\d+)?s\s*->\s*\d+(?:\.\d+)?s\]\s*(.*)$")
+    pattern2 = re.compile(r"^Transcript:\s*\[[^\]]+\]\s*(.*)$", re.IGNORECASE)
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        m = pattern1.match(line) or pattern2.match(line)
+        if m:
+            content = m.group(1).strip()
+            if content:
+                texts.append(content)
+        elif not line.startswith(("UserWarning", "INFO", "WARNING", "Downloading")):
+            # 去掉行内残留时间戳
+            cleaned = re.sub(r"\[\d+(?:\.\d+)?s\s*->\s*\d+(?:\.\d+)?s\]\s*", "", line).strip()
+            if cleaned:
+                texts.append(cleaned)
+    return " ".join(texts).strip()
+
+
+def _parse_refined_payload(text: str) -> dict[str, Any]:
+    """解析成品：优先 JSON title/content；兼容旧版「摘要：\\n\\n全文：」。"""
+    raw = (text or "").strip()
+    if not raw:
+        return {"title": "", "content": "", "display": ""}
+    if raw.startswith("{"):
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict) and ("title" in obj or "content" in obj):
+                title = str(obj.get("title") or "").strip()
+                content = str(obj.get("content") or "").strip()
+                display = "\n\n".join(x for x in (title, content) if x)
+                return {"title": title, "content": content, "display": display, "format": "json"}
+        except Exception:
+            pass
+    title = ""
+    content = ""
+    if "全文：" in raw or "全文:" in raw:
+        parts = re.split(r"\n*全文\s*[:：]\s*", raw, maxsplit=1)
+        head = parts[0].strip()
+        content = (parts[1].strip() if len(parts) > 1 else "")
+        title = re.sub(r"^摘要\s*[:：]\s*", "摘要：", head).strip()
+        if content and not content.startswith("全文"):
+            content = f"全文：{content}"
+    else:
+        # 可能是时间戳原稿：转成无时间戳正文
+        plain = _extract_plain_from_timestamped(raw)
+        title = "摘要：（未整理）"
+        content = f"全文：{plain or raw}"
+    display = "\n\n".join(x for x in (title, content) if x)
+    return {"title": title, "content": content, "display": display, "format": "text"}
 
 
 def read_primary_content(root: Path, name: str, *, max_chars: int = 200_000) -> dict[str, Any]:
@@ -126,16 +196,29 @@ def read_primary_content(root: Path, name: str, *, max_chars: int = 200_000) -> 
         if not p.is_file():
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
-        truncated = len(text) > max_chars
+        parsed = _parse_refined_payload(text)
+        display = parsed.get("display") or text
+        truncated = len(display) > max_chars
         if truncated:
-            text = text[:max_chars]
+            display = display[:max_chars]
         return {
             "kind": kind,
             "path": str(p.resolve()),
-            "text": text,
+            "text": display,
+            "title": parsed.get("title") or "",
+            "content": parsed.get("content") or "",
+            "format": parsed.get("format") or "text",
             "truncated": truncated,
         }
-    return {"kind": None, "path": None, "text": "", "truncated": False}
+    return {
+        "kind": None,
+        "path": None,
+        "text": "",
+        "title": "",
+        "content": "",
+        "format": None,
+        "truncated": False,
+    }
 
 
 def _paths_exist(paths: dict[str, str | None]) -> bool:
