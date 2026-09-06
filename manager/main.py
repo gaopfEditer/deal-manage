@@ -22,7 +22,7 @@ from .telegram_router import router as telegram_router
 from .task_router import router as task_router
 from .whisper_router import router as whisper_router
 from .task_reminder_loop import run_task_reminder_loop
-from .cdp_control import kill_and_start_chrome
+from .cdp_control import kill_and_start_chrome, probe_cdp_profiles
 from .data_views_service import (
     DataViewsBrowseStore,
     build_view_stat,
@@ -255,6 +255,25 @@ async def list_cdp_profiles():
     # 每次从磁盘读取：run.py 可能复用已启动的旧 uvicorn，内存里的 scheduler.config 不会自动更新
     cfg = load_config()
     return {"items": list(cfg.get("cdp_profiles") or [])}
+
+
+@app.get("/api/cdp/status")
+async def cdp_status():
+    """探测各 profile 的 CDP 是否活跃（访问 http://127.0.0.1:{port}/json）。"""
+    cfg = load_config()
+    profiles: list[dict[str, Any]] = list(cfg.get("cdp_profiles") or [])
+
+    def _run() -> list[dict[str, Any]]:
+        return probe_cdp_profiles(profiles)
+
+    items = await asyncio.to_thread(_run)
+    active_n = sum(1 for it in items if (it.get("status") or {}).get("active"))
+    return {
+        "items": items,
+        "active_count": active_n,
+        "total": len(items),
+        "probed_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 @app.get("/api/data-views")

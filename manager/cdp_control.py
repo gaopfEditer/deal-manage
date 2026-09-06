@@ -2,13 +2,104 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
+
+
+def probe_cdp_endpoint(
+    port: int,
+    *,
+    host: str = "127.0.0.1",
+    timeout: float = 1.5,
+) -> dict[str, Any]:
+    """
+    探测 CDP 是否活跃：GET http://{host}:{port}/json
+    能拿到 JSON 列表即视为活跃（与 Chrome --remote-debugging-port 行为一致）。
+    """
+    port = int(port)
+    host = (host or "127.0.0.1").strip() or "127.0.0.1"
+    url = f"http://{host}:{port}/json"
+    out: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "url": url,
+        "active": False,
+        "ok": False,
+        "page_count": 0,
+        "error": None,
+        "sample_titles": [],
+    }
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(raw)
+            if not isinstance(data, list):
+                out["error"] = "unexpected_json"
+                return out
+            titles: list[str] = []
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                t = str(item.get("title") or item.get("url") or "").strip()
+                if t:
+                    titles.append(t[:80])
+                if len(titles) >= 3:
+                    break
+            out["active"] = True
+            out["ok"] = True
+            out["page_count"] = len(data)
+            out["sample_titles"] = titles
+            return out
+    except urllib.error.HTTPError as exc:
+        out["error"] = f"http_{exc.code}"
+    except urllib.error.URLError as exc:
+        out["error"] = f"url_error:{exc.reason!r}"
+    except TimeoutError:
+        out["error"] = "timeout"
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = f"{type(exc).__name__}:{exc}"
+    return out
+
+
+def probe_cdp_profiles(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """对 cdp_profiles 逐个探测 /json，返回带 status 的列表。"""
+    items: list[dict[str, Any]] = []
+    for p in profiles:
+        port_raw = p.get("remote_debugging_port")
+        try:
+            port = int(port_raw) if port_raw is not None and str(port_raw).strip() != "" else None
+        except (TypeError, ValueError):
+            port = None
+        status: dict[str, Any]
+        if port is None:
+            status = {
+                "host": "127.0.0.1",
+                "port": None,
+                "url": None,
+                "active": False,
+                "ok": False,
+                "page_count": 0,
+                "error": "missing_port",
+                "sample_titles": [],
+            }
+        else:
+            status = probe_cdp_endpoint(port)
+        items.append(
+            {
+                **{k: p.get(k) for k in ("id", "name", "chrome_path", "user_data_dir", "remote_debugging_port")},
+                "status": status,
+            }
+        )
+    return items
 
 
 def _kill_listeners_on_port(port: int) -> list[str]:

@@ -73,6 +73,11 @@
       <el-tab-pane label="CDP" name="cdp">
         <div class="cdp-toolbar">
           <el-button type="primary" @click="loadCdpProfiles">刷新 CDP 配置</el-button>
+          <el-button :loading="cdpProbeLoading" @click="probeCdpStatus">探测 CDP 状态</el-button>
+          <span v-if="cdpProbedAt" class="cdp-probe-meta">
+            上次探测 {{ cdpProbedAt }}
+            · 活跃 {{ cdpActiveCount }}/{{ cdpProfiles.length || 0 }}
+          </span>
         </div>
         <div v-if="cdpProfiles.length" class="grid">
           <el-card v-for="p in cdpProfiles" :key="p.id" shadow="hover">
@@ -81,9 +86,22 @@
                 <span>🌐</span>
                 <span>{{ p.name || p.id }}</span>
               </div>
-              <el-tag type="info">{{ p.id }}</el-tag>
+              <el-tag
+                :type="cdpStatusTagType(p)"
+                effect="dark"
+              >
+                {{ cdpStatusLabel(p) }}
+              </el-tag>
             </div>
             <div class="meta">调试端口: {{ p.remote_debugging_port ?? "-" }}</div>
+            <div class="meta" v-if="p.status?.url">探测: {{ p.status.url }}</div>
+            <div class="meta" v-if="p.status?.active">
+              页面数: {{ p.status.page_count ?? 0 }}
+              <template v-if="(p.status.sample_titles || []).length">
+                · {{ (p.status.sample_titles || []).join(" / ") }}
+              </template>
+            </div>
+            <div class="meta" v-else-if="p.status?.error">原因: {{ p.status.error }}</div>
             <div class="meta cdp-path">user-data-dir: {{ p.user_data_dir || "-" }}</div>
             <div class="meta cdp-path">chrome: {{ p.chrome_path || "-" }}</div>
             <div class="actions">
@@ -1128,6 +1146,9 @@ const mainTab = ref("scripts");
 const cards = ref([]);
 const cdpProfiles = ref([]);
 const cdpLoadingId = ref("");
+const cdpProbeLoading = ref(false);
+const cdpProbedAt = ref("");
+const cdpActiveCount = ref(0);
 const dataViewItems = ref([]);
 const dataViewBusyId = ref("");
 const dataPostsVisible = ref(false);
@@ -2987,7 +3008,54 @@ async function loadCards() {
 async function loadCdpProfiles() {
   const res = await fetch("/api/cdp/profiles");
   const data = await res.json();
-  cdpProfiles.value = data.items || [];
+  const items = data.items || [];
+  // 保留已有探测结果（按 id 合并）
+  const prev = new Map((cdpProfiles.value || []).map((p) => [p.id, p.status]));
+  cdpProfiles.value = items.map((p) => ({
+    ...p,
+    status: prev.get(p.id) || p.status || null,
+  }));
+}
+
+function cdpStatusLabel(p) {
+  const s = p?.status;
+  if (!s) return p?.id || "-";
+  if (s.active) return `活跃 · ${s.page_count ?? 0} 页`;
+  return "未活跃";
+}
+
+function cdpStatusTagType(p) {
+  const s = p?.status;
+  if (!s) return "info";
+  return s.active ? "success" : "danger";
+}
+
+async function probeCdpStatus() {
+  cdpProbeLoading.value = true;
+  try {
+    const res = await fetch("/api/cdp/status");
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      // ignore
+    }
+    if (!res.ok) {
+      ElMessage.error(`CDP 探测失败：${data?.detail || res.statusText || "request failed"}`);
+      return;
+    }
+    const items = data.items || [];
+    cdpProfiles.value = items;
+    cdpActiveCount.value = data.active_count ?? items.filter((x) => x.status?.active).length;
+    cdpProbedAt.value = data.probed_at || new Date().toLocaleString();
+    ElMessage.success(
+      `CDP 探测完成：活跃 ${cdpActiveCount.value}/${items.length}`
+    );
+  } catch (e) {
+    ElMessage.error(`CDP 探测失败：${e?.message || e}`);
+  } finally {
+    cdpProbeLoading.value = false;
+  }
 }
 
 async function loadDataViews() {
@@ -3445,6 +3513,10 @@ async function cdpKillAndStart(p) {
       { confirmButtonText: "确定" }
     );
     ElMessage.success("CDP：已结束端口进程并尝试启动 Chrome");
+    // 启动后稍等再探测，给 Chrome 起端口的时间
+    setTimeout(() => {
+      if (mainTab.value === "cdp") probeCdpStatus();
+    }, 1500);
   } finally {
     cdpLoadingId.value = "";
   }
@@ -3669,6 +3741,12 @@ watch(dataPostsVisible, (v) => {
 });
 
 watch(mainTab, (tab) => {
+  if (tab === "cdp") {
+    // 重新进入 CDP Tab 即触发一次状态探测
+    loadCdpProfiles().finally(() => {
+      probeCdpStatus();
+    });
+  }
   if (tab === "publish") {
     loadPublishPlatforms();
     loadPublishPrompts();
@@ -3745,6 +3823,14 @@ onUnmounted(() => {
 }
 .cdp-toolbar {
   margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cdp-probe-meta {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 .cdp-path {
   word-break: break-all;
