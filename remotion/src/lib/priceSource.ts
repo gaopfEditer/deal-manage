@@ -445,28 +445,44 @@ export async function loadMixedAssets(opts: LoadMixedOptions): Promise<PriceSeri
   const bankLegs = legs.filter((l) => l.source === "bank-deposit");
   const marketLegs = legs.filter((l) => l.source !== "bank-deposit");
 
-  const marketResults = await Promise.all(
+  /** 每条腿独立拉取，失败不阻塞其他腿 */
+  const rawResults = await Promise.allSettled(
     marketLegs.map(async (leg) => {
-      try {
-        const points = await fetchLegPoints(leg, start, end, opts.customJsonText ?? "");
-        if (!points.length) throw new Error("无数据");
-        return { label: leg.label, points, source: leg.source };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        throw new Error(`${leg.label}（${leg.source}:${leg.symbol}）失败：${msg}`);
-      }
+      const points = await fetchLegPoints(leg, start, end, opts.customJsonText ?? "");
+      if (!points.length) throw new Error("无数据");
+      return { label: leg.label, points, source: leg.source };
     })
   );
 
-  // 定存对齐其他资产日期轴，避免日历日把横轴撑爆
-  let axisDates: string[] = [];
-  if (marketResults.length) {
-    const set = new Set<string>();
-    for (const r of marketResults) for (const p of r.points) set.add(p.date);
-    axisDates = [...set].sort();
-  } else {
-    axisDates = buildBankDepositPoints(start, end).map((p) => p.date);
+  const marketResults: { label: string; points: Point[]; source: string }[] = [];
+  const failedLegs: string[] = [];
+
+  for (let i = 0; i < rawResults.length; i++) {
+    const r = rawResults[i];
+    if (r.status === "fulfilled") {
+      marketResults.push(r.value);
+    } else {
+      const leg = marketLegs[i];
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      failedLegs.push(`${leg.label}（${leg.source}:${leg.symbol}）失败：${msg}`);
+    }
   }
+
+  if (!marketResults.length) {
+    throw new Error(
+      failedLegs.length
+        ? `全部资产无数据：${failedLegs.join("；")}`
+        : "请至少添加一条资产"
+    );
+  }
+
+  // 定存对齐其他资产日期轴，避免日历日把横轴撑爆
+  const set = new Set<string>();
+  for (const r of marketResults) for (const p of r.points) set.add(p.date);
+  const axisDates: string[] =
+    set.size > 0
+      ? [...set].sort()
+      : buildBankDepositPoints(start, end).map((p) => p.date);
 
   const bankResults = bankLegs.map((leg) => {
     const points = buildBankDepositOnDates(axisDates, start);
@@ -476,9 +492,16 @@ export async function loadMixedAssets(opts: LoadMixedOptions): Promise<PriceSeri
     return { label: leg.label, points, source: leg.source };
   });
 
-  return mergeDailyLegs([...marketResults, ...bankResults], {
+  const payload = mergeDailyLegs([...marketResults, ...bankResults], {
     interval: resolvePayloadInterval(legs),
   });
+
+  // 软提示：部分腿失败但整体仍有数据时附在 hint 里（前端会显示在 toast）
+  if (failedLegs.length) {
+    (payload as PriceSeriesPayload & { _partialErrors?: string[] })._partialErrors = failedLegs;
+  }
+
+  return payload;
 }
 
 function resolvePayloadInterval(legs: AssetLeg[]): string | undefined {

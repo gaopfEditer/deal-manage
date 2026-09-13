@@ -344,18 +344,20 @@ export const BarRacePanel: React.FC = () => {
       const cacheKey = makePriceCacheKey(sd, ed, legsSnap);
 
       if (!opts?.force) {
-        const cached = getPriceCache(cacheKey);
-        if (cached) {
-          if (seq !== loadSeq.current) return;
-          applyPayload(enrichPayload(cached));
-          setCacheHint(`缓存命中 ${sd} → ${ed}（${priceCacheSize()}/${PRICE_CACHE_MAX}）`);
-          setCacheTick((n) => n + 1);
-          showToast(
-            "ok",
-            `「${presetName}」已从缓存加载：${Object.keys(cached.series).length} 条资产 · ${cached.dates.length} 天${dynamicMeta ? ` · ${dynamicMeta}` : ""}`
-          );
-          return;
-        }
+          const cached = getPriceCache(cacheKey);
+          if (cached) {
+            if (seq !== loadSeq.current) return;
+            const partialErrors = (cached as PriceSeriesPayload & { _partialErrors?: string[] })._partialErrors;
+            applyPayload(enrichPayload(cached));
+            setCacheHint(`缓存命中 ${sd} → ${ed}（${priceCacheSize()}/${PRICE_CACHE_MAX}）`);
+            setCacheTick((n) => n + 1);
+            showToast(
+              "ok",
+              `「${presetName}」已从缓存加载：${Object.keys(cached.series).length} 条资产 · ${cached.dates.length} 天${dynamicMeta ? ` · ${dynamicMeta}` : ""}` +
+                (partialErrors ? `\n⚠ 跳过：${partialErrors.join("；")}` : "")
+            );
+            return;
+          }
       }
 
       const raw = await loadMixedAssets({
@@ -370,10 +372,12 @@ export const BarRacePanel: React.FC = () => {
       applyPayload(data);
       setCacheHint(`已缓存 ${sd} → ${ed}（${priceCacheSize()}/${PRICE_CACHE_MAX}）`);
       setCacheTick((n) => n + 1);
-      showToast(
-        "ok",
-        `「${presetName}」数据已就绪：${Object.keys(data.series).length} 条资产 · ${data.dates.length} 天（${sd} → ${ed}）${dynamicMeta ? ` · ${dynamicMeta}` : ""}`
-      );
+      const partialErrors = (data as PriceSeriesPayload & { _partialErrors?: string[] })._partialErrors;
+      const okMsg =
+        `「${presetName}」数据已就绪：${Object.keys(data.series).length} 条资产 · ${data.dates.length} 天（${sd} → ${ed}）` +
+        (dynamicMeta ? ` · ${dynamicMeta}` : "") +
+        (partialErrors ? `\n⚠ 跳过：${partialErrors.join("；")}` : "");
+      showToast(partialErrors ? "ok" : "ok", okMsg);
     } catch (e) {
       if (seq !== loadSeq.current) return;
       const msg = e instanceof Error ? e.message : String(e);
