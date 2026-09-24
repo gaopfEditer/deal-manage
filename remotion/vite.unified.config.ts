@@ -1,6 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
-import path from "node:path";
 
 const STUDIO = "http://127.0.0.1:3008";
 
@@ -62,6 +63,78 @@ const marketProxy = {
   },
 } as const;
 
+const REMOTION_ROOT = path.resolve(__dirname);
+const GATE_APP = path.join(REMOTION_ROOT, "operate-gate-app");
+const GATE_HTML = path.join(GATE_APP, "index.html");
+const GATE_MAIN = path.join(GATE_APP, "main.tsx");
+const PNL_BG = path.join(REMOTION_ROOT, "pnl-cards/public/backgrounds");
+const PNL_TPL = path.join(REMOTION_ROOT, "pnl-cards/templates");
+
+/** /operate-gate/ 盈利图生成（独立于 operate-tools base） */
+function operateGatePlugin(): Plugin {
+  return {
+    name: "operate-gate",
+    config() {
+      return {
+        server: {
+          fs: {
+            allow: [GATE_APP, path.join(REMOTION_ROOT, "pnl-cards"), REMOTION_ROOT],
+          },
+        },
+      };
+    },
+    resolveId(source) {
+      if (source === "/operate-gate-app/main.tsx") return GATE_MAIN;
+      return null;
+    },
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const url = (req.url ?? "").split("?")[0];
+
+        if (url.startsWith("/operate-gate/backgrounds/")) {
+          const name = decodeURIComponent(url.slice("/operate-gate/backgrounds/".length));
+          if (name && !name.includes("..")) {
+            const file = path.join(PNL_BG, name);
+            if (fs.existsSync(file)) {
+              if (name.endsWith(".png")) res.setHeader("Content-Type", "image/png");
+              fs.createReadStream(file).pipe(res);
+              return;
+            }
+          }
+        }
+
+        if (url.startsWith("/operate-gate/templates/")) {
+          const name = decodeURIComponent(url.slice("/operate-gate/templates/".length));
+          if (name && !name.includes("..") && name.endsWith(".json")) {
+            const file = path.join(PNL_TPL, name);
+            if (fs.existsSync(file)) {
+              res.setHeader("Content-Type", "application/json; charset=utf-8");
+              fs.createReadStream(file).pipe(res);
+              return;
+            }
+          }
+        }
+
+        if (url === "/operate-gate" || url === "/operate-gate/") {
+          void (async () => {
+            try {
+              let html = fs.readFileSync(GATE_HTML, "utf8");
+              html = await server.transformIndexHtml("/operate-gate/", html);
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              res.end(html);
+            } catch (e) {
+              next(e);
+            }
+          })();
+          return;
+        }
+
+        next();
+      });
+    },
+  };
+}
+
 function gatewayIndexPlugin(): Plugin {
   return {
     name: "gateway-index",
@@ -87,6 +160,7 @@ function gatewayIndexPlugin(): Plugin {
   <h1>Remotion · port 3007</h1>
   <ul>
     <li><a href="/operate-tools/">/operate-tools</a> — 运营工具台（全屏）</li>
+    <li><a href="/operate-gate/">/operate-gate</a> — 盈利图生成（叠字出 PNG）</li>
     <li><a href="/json-eth-overview">/json-eth-overview</a> — ETH 视频工程（Studio）</li>
   </ul>
   <p><code>http://localhost:3007</code></p>
@@ -102,7 +176,7 @@ function gatewayIndexPlugin(): Plugin {
 
 /** 统一网关：:3007 → operate-tools + 反代 Remotion Studio(:3008) */
 export default defineConfig({
-  plugins: [react(), gatewayIndexPlugin()],
+  plugins: [react(), operateGatePlugin(), gatewayIndexPlugin()],
   root: path.resolve(__dirname, "operate-app"),
   base: "/operate-tools/",
   server: {
@@ -113,7 +187,7 @@ export default defineConfig({
       ...marketProxy,
       // Remotion Studio（内部 3008）：视频工程与其它 Studio 资源
       // 注意：须排除 binance-bapi（否则会被误转到 Studio，返回 nginx 404）
-      "^/(?!operate-tools(?:/|$)|@vite|@fs|@id|@react-refresh|src/|node_modules/|binance(?:-bapi|-fapi)?(?:/|$)|bybit(?:/|$)|sina-|tencent(?:/|$)|gate(?:/|$)).*":
+      "^/(?!operate-tools(?:/|$)|operate-gate(?:/|$)|operate-gate-app(?:/|$)|@vite|@fs|@id|@react-refresh|src/|node_modules/|pnl-cards(?:/|$)|binance(?:-bapi|-fapi)?(?:/|$)|bybit(?:/|$)|sina-|tencent(?:/|$)|gate(?:/|$)).*":
         {
           target: STUDIO,
           changeOrigin: true,

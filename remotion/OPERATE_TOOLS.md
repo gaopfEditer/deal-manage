@@ -11,10 +11,18 @@ pnpm run dev
 | 路由 | 说明 |
 |------|------|
 | http://localhost:3007/operate-tools/ | 运营工具台（全屏，不进 Studio 预览框） |
+| http://localhost:3007/operate-gate/ | 盈利图生成（叠字出 PNG，非官方凭证） |
 | http://localhost:3007/json-eth-overview | ETH 视频工程（Remotion Studio） |
 | http://localhost:3007/ | 入口导航 |
 
 内部：Studio 跑在 `3008`，由网关反代；行情 API 仍走 `/binance` `/gate` `/tencent` 等代理。
+
+## 盈利图（/operate-gate/）
+
+- **底图**：`pnl-cards/public/backgrounds/` 放 OKX / Gate / 币安 / Bitget 空卡 PNG（可用 `node pnl-cards/scripts/gen-placeholders.mjs` 生成占位）
+- **模板编辑**：拖拽字段对齐底图 → 保存 localStorage 或下载 JSON 到 `pnl-cards/templates/`
+- **出图**：填开仓价、平仓/标记价、方向、杠杆 → 自动算收益率 → 浏览器导出 PNG（html-to-image）
+- **说明**：本地叠字工具，非官方凭证；无 API / 无下单
 
 ## 赛马图（多来源组合曲线）
 

@@ -44,6 +44,10 @@ import {
 
 const COLORS = ["#f0883e", "#58a6ff", "#3fb950", "#d2a8ff", "#ff7b72", "#e3b341", "#79c0ff"];
 
+function isDailyLeaderPreset(id: AssetPresetId | null): boolean {
+  return id === "daily-top-gainers" || id === "daily-top-gainers-alpha";
+}
+
 const SAMPLE_CUSTOM_JSON = `{
   "dates": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"],
   "series": {
@@ -231,7 +235,11 @@ export const BarRacePanel: React.FC = () => {
 
   const applyPayload = (data: PriceSeriesPayload) => {
     setPayload(data);
-    setDailyLeaders(data.meta.dailyLeaders ?? computeDailyTop3Leaders(data));
+    setDailyLeaders(
+      isDailyLeaderPreset(activePreset)
+        ? data.meta.dailyLeaders ?? computeDailyTop3Leaders(data)
+        : {}
+    );
     setFrameIdx(0);
     setPlaying(false);
     setStopped(false);
@@ -333,6 +341,7 @@ export const BarRacePanel: React.FC = () => {
       }
 
       const enrichPayload = (data: PriceSeriesPayload): PriceSeriesPayload => {
+        if (!isDailyLeaderPreset(activePreset)) return data;
         const leaders =
           leadersFromScan ?? data.meta.dailyLeaders ?? computeDailyTop3Leaders(data);
         return {
@@ -413,7 +422,7 @@ export const BarRacePanel: React.FC = () => {
     if (!chart.current || !payload) return;
     const end = Math.max(0, Math.min(frameIdx, payload.dates.length - 1));
     const dates = payload.dates;
-    const leaders = dailyLeaders;
+    const leaders = isDailyLeaderPreset(activePreset) ? dailyLeaders : {};
 
     let yMin = Infinity;
     let yMax = -Infinity;
@@ -497,6 +506,7 @@ export const BarRacePanel: React.FC = () => {
         type: "line" as const,
         showSymbol: false,
         connectNulls: true,
+        label: { show: false },
         data,
         lineStyle: { width: 2, color, opacity: markers.length ? 0.55 : 0.85 },
         itemStyle: { color },
@@ -614,7 +624,7 @@ export const BarRacePanel: React.FC = () => {
       true
     );
     chart.current.resize();
-  }, [payload, frameIdx, activeSyms, allSyms, dailyLeaders]);
+  }, [payload, frameIdx, activeSyms, allSyms, dailyLeaders, activePreset]);
 
   const togglePlay = () => {
     if (!payload) return;
@@ -1015,9 +1025,6 @@ export const BarRacePanel: React.FC = () => {
               </div>
               <div style={{ fontSize: 14, fontWeight: 700 }}>
                 {r.value == null ? "-" : formatMoney(r.value)}
-                {atEnd && r.value != null ? (
-                  <span style={{ marginLeft: 6, fontSize: 11, color: "#8b949e" }}>终点市值</span>
-                ) : null}
               </div>
               <div
                 style={{
@@ -1087,7 +1094,11 @@ export const BarRacePanel: React.FC = () => {
                 rows={pnlRows}
                 date={currentDate}
                 initialCapital={initialCapital}
-                dailyTop3={dailyLeaders[axisDateKey(currentDate)] ?? []}
+                dailyTop3={
+                  isDailyLeaderPreset(activePreset)
+                    ? dailyLeaders[axisDateKey(currentDate)] ?? []
+                    : []
+                }
               />
             </div>
           ) : null}

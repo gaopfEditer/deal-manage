@@ -1,0 +1,93 @@
+{
+  "exchange": "gate",
+  "bg": "/operate-gate/backgrounds/gate.png",
+  "width": 750,
+  "height": 1334,
+  "pnlUpColor": "#FF6B9D",
+  "pnlDownColor": "#FF4D4F",
+  "fields": [
+    {
+      "id": "symbol",
+      "x": 48,
+      "y": 118,
+      "fontSize": 20,
+      "fontWeight": 600,
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    {
+      "id": "side",
+      "x": 48,
+      "y": 158,
+      "fontSize": 14,
+      "fontWeight": 500,
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    {
+      "id": "leverage",
+      "x": 120,
+      "y": 158,
+      "fontSize": 14,
+      "fontWeight": 500,
+      "color": "#FFFFFF",
+      "align": "left",
+      "suffix": "x"
+    },
+    {
+      "id": "pnlPct",
+      "x": 48,
+      "y": 268,
+      "fontSize": 56,
+      "fontWeight": 700,
+      "color": "pnl",
+      "align": "left"
+    },
+    {
+      "id": "entry",
+      "x": 48,
+      "y": 520,
+      "fontSize": 16,
+      "fontWeight": 500,
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    {
+      "id": "exit",
+      "x": 48,
+      "y": 568,
+      "fontSize": 16,
+      "fontWeight": 500,
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    {
+      "id": "time",
+      "x": 48,
+      "y": 640,
+      "fontSize": 13,
+      "fontWeight": 400,
+      "color": "#8b949e",
+      "align": "left"
+    },
+    {
+      "id": "nickname",
+      "x": 48,
+      "y": 700,
+      "fontSize": 14,
+      "fontWeight": 500,
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    {
+      "id": "inviteCode",
+      "x": 48,
+      "y": 740,
+      "fontSize": 13,
+      "fontWeight": 400,
+      "color": "#8b949e",
+      "align": "left",
+      "prefix": "邀请码 "
+    }
+  ]
+}

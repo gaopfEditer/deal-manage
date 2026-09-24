@@ -91,6 +91,7 @@ vite.printUrls();
 console.log(`
 [dev] ready
   http://localhost:${PUBLIC_PORT}/operate-tools/
+  http://localhost:${PUBLIC_PORT}/operate-gate/
   http://localhost:${PUBLIC_PORT}/json-eth-overview
 `);
 

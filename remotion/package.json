@@ -8,6 +8,7 @@
     "dev:studio": "remotion studio --port 3008 --no-open",
     "operate": "node scripts/dev.mjs",
     "operate-tools": "node scripts/dev.mjs",
+    "gen:pnl-bg": "node pnl-cards/scripts/gen-placeholders.mjs",
     "render": "remotion render src/index.ts json-eth-overview out/video.mp4 --codec=h264",
     "render:fast": "remotion render src/index.ts json-eth-overview out/video.mp4 --codec=h264 --concurrency=16",
     "typecheck": "tsc --noEmit"
@@ -16,6 +17,7 @@
     "@remotion/cli": "^4.0.278",
     "@remotion/media-utils": "^4.0.278",
     "echarts": "^5.6.0",
+    "html-to-image": "^1.11.13",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "remotion": "^4.0.278"
