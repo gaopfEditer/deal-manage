@@ -245,9 +245,7 @@ export const CardPreview: React.FC<Props> = ({
                 lineHeight: 1.2,
                 cursor: editable ? "move" : "default",
                 outline: selected && editable ? "1px dashed #f0883e" : undefined,
-                padding: editable ? 2 : 0,
-                minWidth: editable ? 24 : undefined,
-                minHeight: editable ? 16 : undefined,
+                outlineOffset: selected && editable ? 2 : undefined,
                 userSelect: "none",
               }}
             >

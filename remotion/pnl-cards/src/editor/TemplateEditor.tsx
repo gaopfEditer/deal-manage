@@ -58,9 +58,15 @@ const SAMPLE_TRADE: TradeInput = {
 type Props = {
   exchange: Exchange;
   onExchangeChange: (ex: Exchange) => void;
+  /** 供出图模式读取最新模板，保证所见即所得 */
+  onTemplateChange?: (template: CardTemplate) => void;
 };
 
-export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) => {
+export const TemplateEditor: React.FC<Props> = ({
+  exchange,
+  onExchangeChange,
+  onTemplateChange,
+}) => {
   const [template, setTemplate] = useState<CardTemplate | null>(null);
   const [selection, setSelection] = useState<EditorSelection | null>(null);
   const [status, setStatus] = useState("");
@@ -71,9 +77,16 @@ export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) 
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
 
   const persistTemplate = useCallback((t: CardTemplate) => {
-    saveTemplateToStorage(t);
+    if (!saveTemplateToStorage(t)) {
+      setStatus("模板过大，无法写入本地缓存（可移除模板内嵌头像后重试）");
+      setTimeout(() => setStatus(""), 5000);
+    }
   }, []);
   useAutoSave(template, persistTemplate, exchange);
+
+  useEffect(() => {
+    if (template) onTemplateChange?.(template);
+  }, [template, onTemplateChange]);
 
   useEffect(() => {
     prevBgPathRef.current = undefined;
@@ -90,7 +103,7 @@ export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) 
     };
   }, [exchange]);
 
-  /** 打开模板或更换底图时，默认将画布与底图渲染尺寸同步为 PNG 实际像素 */
+  /** 仅探测底图像素；更换底图路径时才自动同步尺寸（刷新不覆盖已保存模板） */
   useEffect(() => {
     if (!template?.bg) return;
     const bgPath = template.bg;
@@ -103,11 +116,9 @@ export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) 
       .then(({ width, height }) => {
         if (cancelled) return;
         setBgProbe({ width, height });
-        setTemplate((t) => {
-          if (!t || t.bg !== bgPath) return t;
-          const storedW = t.bgWidth ?? t.width;
-          const storedH = t.bgHeight ?? t.height;
-          if (bgPathChanged || storedW !== width || storedH !== height) {
+        if (bgPathChanged) {
+          setTemplate((t) => {
+            if (!t || t.bg !== bgPath) return t;
             return {
               ...t,
               width,
@@ -115,9 +126,8 @@ export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) 
               bgWidth: width,
               bgHeight: height,
             };
-          }
-          return t;
-        });
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setBgProbe(null);
@@ -298,8 +308,11 @@ export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) 
 
   const save = () => {
     if (!template) return;
-    saveTemplateToStorage(template);
-    setStatus(`已同步到本地缓存 · ${template.exchange}`);
+    if (saveTemplateToStorage(template)) {
+      setStatus(`已同步到本地缓存 · ${template.exchange}`);
+    } else {
+      setStatus("写入失败：模板过大，请移除模板内嵌头像后重试");
+    }
     setTimeout(() => setStatus(""), 3000);
   };
 
@@ -393,7 +406,7 @@ export const TemplateEditor: React.FC<Props> = ({ exchange, onExchangeChange }) 
         <div style={section}>
           <div style={sectionTitle}>画布尺寸（导出 & 坐标）</div>
           <div style={{ fontSize: 11, color: "#8b949e", lineHeight: 1.5 }}>
-            打开或更换底图时自动读取 PNG 尺寸作为默认值，下方可手动调整。
+            首次使用按底图尺寸初始化；编辑后自动缓存，刷新保留。更换底图路径时同步尺寸。
           </div>
           <label style={label}>
             宽

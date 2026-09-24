@@ -1,4 +1,5 @@
 import { normalizeTemplate } from "../fieldUtils";
+import { probeBgSize } from "../probeBgSize";
 import type { CardTemplate, Exchange } from "../types";
 
 const STORAGE_PREFIX = "pnl-card-template:";
@@ -17,8 +18,13 @@ export function loadTemplateFromStorage(exchange: Exchange): CardTemplate | null
   }
 }
 
-export function saveTemplateToStorage(template: CardTemplate): void {
-  localStorage.setItem(storageKey(template.exchange), JSON.stringify(template, null, 2));
+export function saveTemplateToStorage(template: CardTemplate): boolean {
+  try {
+    localStorage.setItem(storageKey(template.exchange), JSON.stringify(template, null, 2));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function downloadTemplateJson(template: CardTemplate): void {
@@ -39,18 +45,22 @@ export async function loadBuiltinTemplate(exchange: Exchange): Promise<CardTempl
   return normalizeTemplate((await res.json()) as CardTemplate);
 }
 
+/** 首次无缓存时加载内置模板，并按底图 PNG 实际像素设默认尺寸 */
 export async function resolveTemplate(exchange: Exchange): Promise<CardTemplate> {
   const cached = loadTemplateFromStorage(exchange);
-  if (cached) {
-    /** OKX 布局升级：旧版缓存自动丢弃，改用内置 1080×1920 标准模板 */
-    if (
-      exchange === "okx" &&
-      (cached.width !== 1080 ||
-        !cached.fields.some((f) => f.id === "symbolTitle" || f.id === "sideRow"))
-    ) {
-      return loadBuiltinTemplate(exchange);
-    }
-    return cached;
+  if (cached) return cached;
+
+  const builtin = await loadBuiltinTemplate(exchange);
+  try {
+    const { width, height } = await probeBgSize(builtin.bg);
+    return normalizeTemplate({
+      ...builtin,
+      width,
+      height,
+      bgWidth: width,
+      bgHeight: height,
+    });
+  } catch {
+    return builtin;
   }
-  return loadBuiltinTemplate(exchange);
 }

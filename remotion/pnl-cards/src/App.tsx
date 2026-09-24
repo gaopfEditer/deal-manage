@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TemplateEditor } from "./editor/TemplateEditor";
 import { exportCardPng } from "./exportPng";
 import { formatPnl } from "./calc";
@@ -6,7 +6,11 @@ import { computePnl } from "./formatField";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { CardPreview } from "./preview/CardPreview";
 import { loadPrefs, loadTradeDraft, savePrefs, saveTradeDraft } from "./storage/draft";
-import { resolveTemplate } from "./storage/templates";
+import {
+  loadTemplateFromStorage,
+  resolveTemplate,
+  saveTemplateToStorage,
+} from "./storage/templates";
 import { EXCHANGES } from "./types";
 import type { CardTemplate, Exchange, TradeInput } from "./types";
 
@@ -32,6 +36,7 @@ export const PnlCardsApp: React.FC = () => {
   const [trade, setTrade] = useState<TradeInput>({ ...EMPTY_TRADE });
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState("");
+  const editorTemplateRef = useRef<CardTemplate | null>(null);
 
   useEffect(() => {
     savePrefs({ mode, exchange });
@@ -48,21 +53,33 @@ export const PnlCardsApp: React.FC = () => {
   );
   useAutoSave(trade, persistTrade, exchange);
 
+  const applyExportTemplate = useCallback((ex: Exchange) => {
+    const cached = loadTemplateFromStorage(ex);
+    if (cached) {
+      setTemplate(cached);
+      return;
+    }
+    setTemplate(null);
+    setErr("");
+    void resolveTemplate(ex)
+      .then(setTemplate)
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, []);
+
   useEffect(() => {
     if (mode !== "export") return;
-    let cancelled = false;
-    setErr("");
-    void resolveTemplate(exchange)
-      .then((t) => {
-        if (!cancelled) setTemplate(t);
-      })
-      .catch((e) => {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [exchange, mode]);
+    applyExportTemplate(exchange);
+  }, [exchange, mode, applyExportTemplate]);
+
+  const switchToExport = () => {
+    const latest =
+      editorTemplateRef.current ?? loadTemplateFromStorage(exchange);
+    if (latest) {
+      saveTemplateToStorage(latest);
+      setTemplate(latest);
+    }
+    setMode("export");
+  };
 
   const pnlPct = useMemo(() => computePnl(trade), [trade]);
 
@@ -97,7 +114,7 @@ export const PnlCardsApp: React.FC = () => {
           <button
             type="button"
             style={mode === "export" ? tabActive : tab}
-            onClick={() => setMode("export")}
+            onClick={switchToExport}
           >
             出图
           </button>
@@ -114,7 +131,13 @@ export const PnlCardsApp: React.FC = () => {
       {err ? <div style={errorBox}>{err}</div> : null}
 
       {mode === "editor" ? (
-        <TemplateEditor exchange={exchange} onExchangeChange={setExchange} />
+        <TemplateEditor
+          exchange={exchange}
+          onExchangeChange={setExchange}
+          onTemplateChange={(t) => {
+            editorTemplateRef.current = t;
+          }}
+        />
       ) : (
         <div style={exportLayout}>
           <aside style={formPane}>
