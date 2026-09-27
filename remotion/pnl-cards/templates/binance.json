@@ -1,8 +1,10 @@
 {
   "exchange": "binance",
-  "bg": "/operate-gate/backgrounds/binance.png",
-  "width": 750,
-  "height": 1334,
+  "bg": "/operate-gate/backgrounds/binance.jpg",
+  "width": 932,
+  "height": 1280,
+  "bgWidth": 932,
+  "bgHeight": 1280,
   "pnlUpColor": "#00C853",
   "pnlDownColor": "#FF4D4F",
   "fields": [
@@ -44,6 +46,17 @@
       "align": "left"
     },
     {
+      "key": "binance_entry_lbl",
+      "id": "entryLabel",
+      "x": 48,
+      "y": 496,
+      "fontSize": 14,
+      "fontWeight": 400,
+      "color": "#8b949e",
+      "align": "left"
+    },
+    {
+      "key": "binance_entry",
       "id": "entry",
       "x": 48,
       "y": 520,
@@ -53,6 +66,17 @@
       "align": "left"
     },
     {
+      "key": "binance_exit_lbl",
+      "id": "exitLabel",
+      "x": 48,
+      "y": 544,
+      "fontSize": 14,
+      "fontWeight": 400,
+      "color": "#8b949e",
+      "align": "left"
+    },
+    {
+      "key": "binance_exit",
       "id": "exit",
       "x": 48,
       "y": 568,

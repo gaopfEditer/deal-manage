@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAutoSave } from "../hooks/useAutoSave";
 import { CardPreview } from "../preview/CardPreview";
+import { DEFAULT_BG } from "../defaults";
 import {
   downloadTemplateJson,
   loadBuiltinTemplate,
@@ -15,7 +16,12 @@ import {
   fieldListLabel,
   FONT_OPTIONS,
 } from "../fieldUtils";
-import { ALL_FIELD_IDS, computePnl, resolveFieldBody } from "../formatField";
+import {
+  ALL_FIELD_IDS,
+  computePnl,
+  EXPORT_DATA_FIELD_IDS,
+  resolveFieldBody,
+} from "../formatField";
 import { probeBgSize } from "../probeBgSize";
 import {
   getTemplateConstraints,
@@ -73,6 +79,7 @@ export const TemplateEditor: React.FC<Props> = ({
   const [bgProbe, setBgProbe] = useState<{ width: number; height: number } | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const bgInputRef = useRef<HTMLInputElement>(null);
   const prevBgPathRef = useRef<string | undefined>(undefined);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -152,9 +159,10 @@ export const TemplateEditor: React.FC<Props> = ({
     return resolveFieldBody(
       { ...selectedField, text: undefined },
       SAMPLE_TRADE,
-      samplePnl
+      samplePnl,
+      template?.exchange ?? exchange
     );
-  }, [selectedField, samplePnl]);
+  }, [selectedField, samplePnl, template?.exchange, exchange]);
 
   const sizeMismatch =
     bgProbe &&
@@ -294,6 +302,28 @@ export const TemplateEditor: React.FC<Props> = ({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selection, duplicateSelection, deleteSelection]);
 
+  const onBgFile = async (file: File | undefined) => {
+    if (!file || !template) return;
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const { width, height } = await probeBgSize(dataUrl);
+      prevBgPathRef.current = undefined;
+      setTemplate({
+        ...template,
+        bg: dataUrl,
+        width,
+        height,
+        bgWidth: width,
+        bgHeight: height,
+      });
+      setStatus(`底图已载入 ${width}×${height}，已写入模板缓存`);
+      setTimeout(() => setStatus(""), 4000);
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : String(e));
+      setTimeout(() => setStatus(""), 4000);
+    }
+  };
+
   const onAvatarFile = async (file: File | undefined) => {
     if (!file || !selectedImage) return;
     try {
@@ -382,15 +412,51 @@ export const TemplateEditor: React.FC<Props> = ({
 
         <div style={section}>
           <div style={sectionTitle}>底图</div>
+          <div style={{ fontSize: 11, color: "#8b949e", lineHeight: 1.5 }}>
+            正式底图请放到 public/backgrounds/ 或下方上传（写入本地模板缓存，不会被脚本覆盖）。
+          </div>
+          <input
+            ref={bgInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            style={{ display: "none" }}
+            onChange={(e) => void onBgFile(e.target.files?.[0])}
+          />
+          <button type="button" style={btnPrimary} onClick={() => bgInputRef.current?.click()}>
+            上传底图 PNG
+          </button>
           <label style={label}>
-            路径
+            路径 / Data URL
             <input
-              value={template.bg}
-              onChange={(e) => setTemplate({ ...template, bg: e.target.value })}
+              value={
+                template.bg.startsWith("data:")
+                  ? `（已内嵌底图 ${Math.round(template.bg.length / 1024)}KB）`
+                  : template.bg
+              }
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v.startsWith("（已内嵌")) return;
+                setTemplate({ ...template, bg: v });
+              }}
+              readOnly={template.bg.startsWith("data:")}
               style={input}
-              placeholder="/operate-gate/backgrounds/okx.png"
+              placeholder="/operate-gate/backgrounds/okx.jpg"
             />
           </label>
+          {template.bg.startsWith("data:") ? (
+            <button
+              type="button"
+              style={btnGhost}
+              onClick={() =>
+                setTemplate({
+                  ...template,
+                  bg: DEFAULT_BG[template.exchange],
+                })
+              }
+            >
+              改回文件路径
+            </button>
+          ) : null}
           {bgProbe ? (
             <div style={{ fontSize: 11, color: "#8b949e" }}>
               文件实际像素：{bgProbe.width} × {bgProbe.height}
@@ -563,36 +629,62 @@ export const TemplateEditor: React.FC<Props> = ({
                 ))}
               </select>
             </label>
-            <label style={label}>
-              显示文本
-              <textarea
-                value={
-                  selectedField.text !== undefined
-                    ? selectedField.text
-                    : selectedFieldAutoText
-                }
-                onChange={(e) =>
-                  updateField(selectedField.key, { text: e.target.value })
-                }
-                rows={3}
-                style={{ ...input, resize: "vertical", fontFamily: "inherit" }}
-                placeholder="输入要显示的文字"
-              />
-            </label>
-            {selectedField.text !== undefined ? (
-              <button
-                type="button"
-                style={btnGhost}
-                onClick={() =>
-                  updateField(selectedField.key, { text: undefined })
-                }
-              >
-                恢复跟随表单/自动
-              </button>
-            ) : (
-              <div style={{ fontSize: 11, color: "#8b949e", lineHeight: 1.5 }}>
-                当前跟随出图表单自动填充；编辑后将固定为该文本（前缀/后缀仍生效）。
+            {EXPORT_DATA_FIELD_IDS.has(selectedField.id) ? (
+              <div style={{ fontSize: 11, color: "#58a6ff", lineHeight: 1.5 }}>
+                出图页预览值（跟随左侧表单）：{selectedFieldAutoText || "—"}
+                <br />
+                收益率 / 开仓价 / 标记价 / 价格标签在出图时永远读表单，此处仅调位置与样式。
               </div>
+            ) : (
+              <>
+                <label style={label}>
+                  显示文本
+                  {selectedField.text === undefined ? (
+                    <div style={{ fontSize: 10, color: "#58a6ff", marginBottom: 4 }}>
+                      预览（跟随表单）：{selectedFieldAutoText || "—"}
+                    </div>
+                  ) : null}
+                  <textarea
+                    value={selectedField.text ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      updateField(selectedField.key, {
+                        text: v === "" ? undefined : v,
+                      });
+                    }}
+                    rows={3}
+                    style={{ ...input, resize: "vertical", fontFamily: "inherit" }}
+                    placeholder={
+                      selectedField.text === undefined
+                        ? `留空=跟随表单；输入后固定为自定义文本。当前自动值：${selectedFieldAutoText || "—"}`
+                        : "固定显示的文字（前缀/后缀仍生效）"
+                    }
+                  />
+                </label>
+                {selectedField.text !== undefined ? (
+                  <button
+                    type="button"
+                    style={btnGhost}
+                    onClick={() =>
+                      updateField(selectedField.key, { text: undefined })
+                    }
+                  >
+                    恢复跟随表单/自动
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    style={btnGhost}
+                    onClick={() =>
+                      updateField(selectedField.key, {
+                        text: selectedFieldAutoText,
+                      })
+                    }
+                  >
+                    固定为当前预览文本
+                  </button>
+                )}
+              </>
             )}
             <label style={label}>
               X

@@ -96,7 +96,10 @@ function operateGatePlugin(): Plugin {
           if (name && !name.includes("..")) {
             const file = path.join(PNL_BG, name);
             if (fs.existsSync(file)) {
-              if (name.endsWith(".png")) res.setHeader("Content-Type", "image/png");
+              const lower = name.toLowerCase();
+              if (lower.endsWith(".png")) res.setHeader("Content-Type", "image/png");
+              else if (/\.jpe?g$/.test(lower)) res.setHeader("Content-Type", "image/jpeg");
+              else if (lower.endsWith(".webp")) res.setHeader("Content-Type", "image/webp");
               fs.createReadStream(file).pipe(res);
               return;
             }

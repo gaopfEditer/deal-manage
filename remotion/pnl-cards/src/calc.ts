@@ -2,12 +2,14 @@ export function calcPnlPct(
   side: "long" | "short",
   entry: number,
   exit: number,
-  leverage: number
+  leverage: number,
+  market: "swap" | "spot" = "swap"
 ): number {
-  if (!entry) return 0;
+  if (!entry || !exit) return 0;
   const move =
     side === "long" ? (exit - entry) / entry : (entry - exit) / entry;
-  return move * leverage * 100;
+  const lev = market === "spot" ? 1 : Math.max(leverage || 1, 1);
+  return move * lev * 100;
 }
 
 export function formatPnl(n: number): string {

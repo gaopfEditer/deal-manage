@@ -34,6 +34,28 @@ export function loadTradeDraft(exchange: Exchange): TradeInput | null {
   }
 }
 
-export function saveTradeDraft(exchange: Exchange, trade: TradeInput): void {
-  localStorage.setItem(`${TRADE_PREFIX}${exchange}`, JSON.stringify(trade));
+export function saveTradeDraft(exchange: Exchange, trade: TradeInput): boolean {
+  try {
+    localStorage.setItem(`${TRADE_PREFIX}${exchange}`, JSON.stringify(trade));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadInitialTrade(exchange: Exchange): TradeInput {
+  const draft = loadTradeDraft(exchange);
+  const empty: TradeInput = {
+    symbol: "",
+    market: "swap",
+    side: "long",
+    leverage: 0,
+    status: "closed",
+    entry: 0,
+    exit: 0,
+    time: "",
+    nickname: "",
+    inviteCode: "",
+  };
+  return draft ? { ...empty, ...draft } : empty;
 }

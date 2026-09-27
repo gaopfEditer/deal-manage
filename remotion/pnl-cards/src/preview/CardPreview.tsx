@@ -142,9 +142,11 @@ export const CardPreview: React.FC<Props> = ({
   };
 
   const [natural, setNatural] = React.useState<{ w: number; h: number } | null>(null);
+  const [bgFailed, setBgFailed] = React.useState(false);
 
   React.useEffect(() => {
     setNatural(null);
+    setBgFailed(false);
   }, [template.bg]);
 
   const imgW = template.bgWidth ?? natural?.w ?? template.width;
@@ -172,7 +174,9 @@ export const CardPreview: React.FC<Props> = ({
           width: template.width,
           height: template.height,
           overflow: "hidden",
-          background: "#000000",
+          background: editable
+            ? "repeating-conic-gradient(#1a1a1f 0% 25%, #121218 0% 50%) 50% / 20px 20px"
+            : "#000000",
         }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -184,11 +188,13 @@ export const CardPreview: React.FC<Props> = ({
           alt=""
           draggable={false}
           onLoad={(e) => {
+            setBgFailed(false);
             const img = e.currentTarget;
             if (img.naturalWidth > 0 && img.naturalHeight > 0) {
               setNatural({ w: img.naturalWidth, h: img.naturalHeight });
             }
           }}
+          onError={() => setBgFailed(true)}
           style={{
             position: "absolute",
             left: 0,
@@ -203,8 +209,29 @@ export const CardPreview: React.FC<Props> = ({
             pointerEvents: "none",
           }}
         />
+        {bgFailed ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 24,
+              background: "rgba(255,77,79,0.12)",
+              color: "#ff7b72",
+              fontSize: 13,
+              textAlign: "center",
+              lineHeight: 1.6,
+              zIndex: 1,
+              pointerEvents: "none",
+            }}
+          >
+            底图加载失败：请检查路径或在右侧「上传底图 PNG」重新载入
+          </div>
+        ) : null}
         {template.fields.map((field) => {
-          const text = resolveFieldText(field, trade, pnlPct);
+          const text = resolveFieldText(field, trade, pnlPct, template.exchange);
           if (!text && !editable) return null;
           const color = resolveFieldColor(
             field,

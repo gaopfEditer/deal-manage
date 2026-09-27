@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-/** 生成四所空卡占位 PNG（750×1334），可替换为 Photopea 导出的正式底图 */
+/**
+ * 仅生成参考占位图到 public/backgrounds/_generated/
+ * 绝不写入 okx.png / gate.png 等正式底图路径。
+ */
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = path.join(ROOT, "public/backgrounds");
+const OUT = path.join(ROOT, "public/backgrounds/_generated");
 
 const cards = [
-  { name: "okx", w: 1080, h: 1920, bg: [0, 0, 0], label: "OKX · 1080×1920" },
-  { name: "gate", w: 750, h: 1334, bg: [15, 18, 28], label: "Gate · 空卡占位" },
-  { name: "binance", w: 750, h: 1334, bg: [11, 14, 17], label: "Binance · 空卡占位" },
-  { name: "bitget", w: 750, h: 1334, bg: [12, 16, 24], label: "Bitget · 空卡占位" },
+  { name: "okx", w: 1080, h: 1920, bg: [26, 26, 30], label: "OKX · 1080×1920" },
+  { name: "gate", w: 750, h: 1334, bg: [15, 18, 28], label: "Gate" },
+  { name: "binance", w: 750, h: 1334, bg: [11, 14, 17], label: "Binance" },
+  { name: "bitget", w: 750, h: 1334, bg: [12, 16, 24], label: "Bitget" },
 ];
 
 function crc32(buf) {
@@ -66,7 +69,8 @@ fs.mkdirSync(OUT, { recursive: true });
 for (const card of cards) {
   const w = card.w ?? 750;
   const h = card.h ?? 1334;
-  const file = path.join(OUT, `${card.name}.png`);
+  const file = path.join(OUT, `${card.name}.placeholder.png`);
   fs.writeFileSync(file, solidPng(w, h, card.bg));
   console.log(`wrote ${file} (${w}x${h}) · ${card.label}`);
 }
+console.log("\n正式底图请手动放到 public/backgrounds/{okx,gate,binance,bitget}.png，或在模板编辑里上传。");

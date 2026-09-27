@@ -19,7 +19,7 @@ pnpm run dev
 
 ## 盈利图（/operate-gate/）
 
-- **底图**：`pnl-cards/public/backgrounds/` 放 OKX / Gate / 币安 / Bitget 空卡 PNG（可用 `node pnl-cards/scripts/gen-placeholders.mjs` 生成占位）
+- **底图**：`pnl-cards/public/backgrounds/` 放 OKX / Gate / 币安 / Bitget **正式**空卡 PNG（自行 Photopea 导出；勿用脚本覆盖。参考占位仅输出到 `backgrounds/_generated/`）
 - **模板编辑**：拖拽字段对齐底图 → 保存 localStorage 或下载 JSON 到 `pnl-cards/templates/`
 - **出图**：填开仓价、平仓/标记价、方向、杠杆 → 自动算收益率 → 浏览器导出 PNG（html-to-image）
 - **说明**：本地叠字工具，非官方凭证；无 API / 无下单

@@ -10,7 +10,9 @@ export type FieldId =
   | "status"
   | "pnlPct"
   | "entry"
+  | "entryLabel"
   | "exit"
+  | "exitLabel"
   | "time"
   | "nickname"
   | "inviteCode"
@@ -102,7 +104,9 @@ export const FIELD_LABELS: Record<FieldId, string> = {
   status: "状态",
   pnlPct: "收益率",
   entry: "开仓价",
+  entryLabel: "开仓价标签",
   exit: "平仓/标记价",
+  exitLabel: "平仓/标记价标签",
   time: "时间",
   nickname: "昵称",
   inviteCode: "邀请码",

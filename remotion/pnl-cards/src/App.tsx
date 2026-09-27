@@ -2,10 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { TemplateEditor } from "./editor/TemplateEditor";
 import { exportCardPng } from "./exportPng";
 import { formatPnl } from "./calc";
-import { computePnl } from "./formatField";
+import { computePnl, entryPriceLabel, exitPriceLabel } from "./formatField";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { CardPreview } from "./preview/CardPreview";
-import { loadPrefs, loadTradeDraft, savePrefs, saveTradeDraft } from "./storage/draft";
+import { loadInitialTrade, loadPrefs, savePrefs, saveTradeDraft } from "./storage/draft";
 import {
   loadTemplateFromStorage,
   resolveTemplate,
@@ -16,24 +16,14 @@ import type { CardTemplate, Exchange, TradeInput } from "./types";
 
 type Mode = "export" | "editor";
 
-const EMPTY_TRADE: TradeInput = {
-  symbol: "",
-  market: "swap",
-  side: "long",
-  leverage: 0,
-  status: "closed",
-  entry: 0,
-  exit: 0,
-  time: "",
-  nickname: "",
-  inviteCode: "",
-};
-
 export const PnlCardsApp: React.FC = () => {
   const [mode, setMode] = useState<Mode>(() => loadPrefs()?.mode ?? "export");
   const [exchange, setExchange] = useState<Exchange>(() => loadPrefs()?.exchange ?? "okx");
   const [template, setTemplate] = useState<CardTemplate | null>(null);
-  const [trade, setTrade] = useState<TradeInput>({ ...EMPTY_TRADE });
+  const [trade, setTrade] = useState<TradeInput>(() =>
+    loadInitialTrade(loadPrefs()?.exchange ?? "okx")
+  );
+  const [draftStatus, setDraftStatus] = useState("");
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState("");
   const editorTemplateRef = useRef<CardTemplate | null>(null);
@@ -43,15 +33,26 @@ export const PnlCardsApp: React.FC = () => {
   }, [mode, exchange]);
 
   useEffect(() => {
-    const draft = loadTradeDraft(exchange);
-    setTrade(draft ? { ...EMPTY_TRADE, ...draft } : { ...EMPTY_TRADE });
+    setTrade(loadInitialTrade(exchange));
   }, [exchange]);
 
   const persistTrade = useCallback(
-    (t: TradeInput) => saveTradeDraft(exchange, t),
+    (t: TradeInput) => {
+      if (saveTradeDraft(exchange, t)) {
+        setDraftStatus("");
+      } else {
+        setDraftStatus("表单缓存写入失败（头像过大时可移除后重试）");
+      }
+    },
     [exchange]
   );
-  useAutoSave(trade, persistTrade, exchange);
+  useAutoSave(trade, persistTrade, exchange, 150);
+
+  useEffect(() => {
+    const onBeforeUnload = () => persistTrade(trade);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [trade, persistTrade]);
 
   const applyExportTemplate = useCallback((ex: Exchange) => {
     const cached = loadTemplateFromStorage(ex);
@@ -84,7 +85,11 @@ export const PnlCardsApp: React.FC = () => {
   const pnlPct = useMemo(() => computePnl(trade), [trade]);
 
   const patchTrade = (patch: Partial<TradeInput>) => {
-    setTrade((t) => ({ ...t, ...patch }));
+    setTrade((t) => {
+      const next = { ...t, ...patch };
+      persistTrade(next);
+      return next;
+    });
   };
 
   const onExport = async () => {
@@ -107,8 +112,11 @@ export const PnlCardsApp: React.FC = () => {
         <div>
           <h1 style={{ margin: 0, fontSize: 18, color: "#e6edf3" }}>盈利图生成</h1>
           <p style={{ margin: "4px 0 0", fontSize: 12, color: "#8b949e" }}>
-            本地叠字出图 · 非官方凭证 · 不含 API / 下单
+            本地叠字出图 · 表单自动缓存 · 非官方凭证
           </p>
+          {draftStatus ? (
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#f0883e" }}>{draftStatus}</p>
+          ) : null}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button
@@ -219,7 +227,7 @@ export const PnlCardsApp: React.FC = () => {
             </label>
 
             <label style={label}>
-              开仓价
+              {entryPriceLabel(exchange)}
               <input
                 type="number"
                 step="any"
@@ -230,7 +238,7 @@ export const PnlCardsApp: React.FC = () => {
             </label>
 
             <label style={label}>
-              {trade.status === "open" ? "标记价" : "平仓均价"}
+              {exitPriceLabel(exchange, trade.status)}
               <input
                 type="number"
                 step="any"

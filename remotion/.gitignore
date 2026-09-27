@@ -3,3 +3,10 @@ out/
 .cache/
 .DS_Store
 *.log
+
+# 盈利图正式底图由用户自行放置，勿用仓库占位覆盖
+pnl-cards/public/backgrounds/*.png
+pnl-cards/public/backgrounds/*.jpg
+pnl-cards/public/backgrounds/*.jpeg
+pnl-cards/public/backgrounds/*.webp
+pnl-cards/public/backgrounds/Photos Library.photoslibrary/

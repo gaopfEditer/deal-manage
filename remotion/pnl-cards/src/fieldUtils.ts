@@ -1,3 +1,6 @@
+import { migrateBgPath } from "./defaults";
+import { ensurePriceLabelFields } from "./ensurePriceLabels";
+import { EXPORT_DATA_FIELD_IDS } from "./formatField";
 import type { CardTemplate, FieldId, ImageLayer, TextField } from "./types";
 
 export const DEFAULT_FONT =
@@ -24,12 +27,48 @@ export function newFieldKey(prefix = "f"): string {
   return `${prefix}_${Date.now()}_${keySeq}`;
 }
 
+function migrateExitLabelField(field: TextField): TextField {
+  if (field.id !== "custom" || field.text === undefined) return field;
+  const t = field.text.trim();
+  const isExitLbl =
+    field.key.includes("exit_lbl") ||
+    t === "标记价格" ||
+    t === "标记价" ||
+    t === "最新价格" ||
+    t === "平仓价格" ||
+    t === "平仓均价" ||
+    t === "平均平仓价";
+  if (!isExitLbl) return field;
+  const { text: _, ...rest } = field;
+  return { ...rest, id: "exitLabel" };
+}
+
+function migrateEntryLabelField(field: TextField): TextField {
+  if (field.id !== "custom" || field.text === undefined) return field;
+  const t = field.text.trim();
+  const isEntryLbl =
+    field.key.includes("entry_lbl") ||
+    t === "开仓均价" ||
+    t === "开仓价格" ||
+    t === "开仓价";
+  if (!isEntryLbl) return field;
+  const { text: _, ...rest } = field;
+  return { ...rest, id: "entryLabel" };
+}
+
 export function normalizeField(field: TextField, index: number): TextField {
-  return {
+  let base: TextField = {
     ...field,
     key: field.key || `${field.id}_${index}`,
     fontFamily: field.fontFamily ?? DEFAULT_FONT,
   };
+  base = migrateEntryLabelField(base);
+  base = migrateExitLabelField(base);
+  if (EXPORT_DATA_FIELD_IDS.has(base.id) && base.text !== undefined) {
+    const { text: _, ...rest } = base;
+    return rest;
+  }
+  return base;
 }
 
 export function normalizeTemplate(template: CardTemplate): CardTemplate {
@@ -54,7 +93,8 @@ export function normalizeTemplate(template: CardTemplate): CardTemplate {
     seen.add(normalized.key);
     return normalized;
   });
-  return { ...template, fields, images };
+  const bg = migrateBgPath(template.bg, template.exchange);
+  return ensurePriceLabelFields({ ...template, bg, fields, images });
 }
 
 export function defaultFieldForType(id: FieldId, yOffset = 0): TextField {
@@ -98,7 +138,9 @@ export function fieldListLabel(field: TextField): string {
     status: "状态",
     pnlPct: "收益率",
     entry: "开仓价",
+    entryLabel: "开仓价标签",
     exit: "平仓/标记价",
+    exitLabel: "平仓/标记价标签",
     time: "时间",
     nickname: "昵称",
     inviteCode: "邀请码",
