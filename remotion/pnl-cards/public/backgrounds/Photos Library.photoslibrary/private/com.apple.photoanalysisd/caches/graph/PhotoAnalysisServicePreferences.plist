@@ -123,7 +123,7 @@
 		<key>FeaturedCollectionElectionTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:40Z</date>
+			<date>2026-10-15T15:22:18Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -145,7 +145,7 @@
 		<key>MemoryCreationFeatureAvailabilityTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T11:19:22Z</date>
+			<date>2026-10-15T13:18:51Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCode</key>
@@ -156,7 +156,7 @@
 		<key>MessagesBackdropGenerationTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:56Z</date>
+			<date>2026-10-15T15:21:04Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCode</key>
@@ -167,7 +167,7 @@
 		<key>MessagesContextualBackdropGenerationTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:14Z</date>
+			<date>2026-10-15T15:20:59Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCode</key>
@@ -178,7 +178,7 @@
 		<key>PHAAssetRevGeocodeEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T23:18:55Z</date>
+			<date>2026-10-15T23:19:23Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -189,7 +189,7 @@
 		<key>PHACachingCPAnalyticsPropertiesTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T11:19:22Z</date>
+			<date>2026-10-15T13:18:51Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -200,7 +200,7 @@
 		<key>PHAContactUpdateTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:06:13Z</date>
+			<date>2026-10-15T15:21:21Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -211,7 +211,7 @@
 		<key>PHAExternalAssetsTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:14Z</date>
+			<date>2026-10-15T15:20:59Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -222,7 +222,7 @@
 		<key>PHAFeaturesUsageReportingTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T11:19:22Z</date>
+			<date>2026-10-15T13:18:51Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -233,7 +233,7 @@
 		<key>PHAForcedHighlightEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:06:18Z</date>
+			<date>2026-10-15T15:21:54Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCode</key>
@@ -244,9 +244,9 @@
 		<key>PHAGraphRebuildTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:06:13Z</date>
+			<date>2026-10-15T15:21:21Z</date>
 			<key>didRunIncrementally</key>
-			<false/>
+			<true/>
 			<key>featureCheckpoint</key>
 			<integer>50</integer>
 			<key>featureCode</key>
@@ -259,7 +259,7 @@
 		<key>PHAHighlightCollectionEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T20:05:31Z</date>
+			<date>2026-10-15T20:06:03Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -270,7 +270,7 @@
 		<key>PHAHighlightEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T20:05:31Z</date>
+			<date>2026-10-15T20:06:03Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCode</key>
@@ -281,7 +281,7 @@
 		<key>PHAMediaSampleReportingTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T11:19:22Z</date>
+			<date>2026-10-15T13:18:51Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -292,7 +292,7 @@
 		<key>PHAMemoriesEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:40Z</date>
+			<date>2026-10-15T15:22:18Z</date>
 			<key>didRunIncrementally</key>
 			<true/>
 			<key>fteInterval</key>
@@ -303,7 +303,7 @@
 		<key>PHAMemoryElectionTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:40Z</date>
+			<date>2026-10-15T15:22:18Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCode</key>
@@ -314,7 +314,7 @@
 		<key>PHAPeopleSuggestionEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:14Z</date>
+			<date>2026-10-15T15:20:59Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -325,7 +325,7 @@
 		<key>PHAPortraitDonationEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T13:18:41Z</date>
+			<date>2026-10-15T15:20:15Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -336,7 +336,7 @@
 		<key>PHARevGeocodeSyndicationTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T13:18:41Z</date>
+			<date>2026-10-15T15:20:15Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -347,9 +347,9 @@
 		<key>PHASearchEnrichmentTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:06:29Z</date>
+			<date>2026-10-15T15:21:37Z</date>
 			<key>didRunIncrementally</key>
-			<false/>
+			<true/>
 			<key>fteInterval</key>
 			<real>203291</real>
 			<key>version</key>
@@ -358,7 +358,7 @@
 		<key>PHASuggestionGenerationTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:40Z</date>
+			<date>2026-10-15T15:22:18Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCheckpoint</key>
@@ -373,7 +373,7 @@
 		<key>PHASyndicationTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:14Z</date>
+			<date>2026-10-15T15:20:59Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
@@ -384,7 +384,7 @@
 		<key>PHAWallpaperWeeklyTask[Ambient]</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:05:56Z</date>
+			<date>2026-10-15T15:21:04Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>featureCheckpoint</key>
@@ -410,7 +410,7 @@
 		<key>PublicEventCachingTask</key>
 		<dict>
 			<key>completionDate</key>
-			<date>2026-10-14T14:06:13Z</date>
+			<date>2026-10-15T15:21:21Z</date>
 			<key>didRunIncrementally</key>
 			<false/>
 			<key>fteInterval</key>
